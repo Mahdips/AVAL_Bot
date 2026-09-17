@@ -12,6 +12,11 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 DRY_RUN=0
 REPO_URL="${AVAL_BOT_REPO:-https://github.com/Mahdips/AVAL_Bot}"
+
+installer_error() {
+    echo "Installer failed at line ${BASH_LINENO[0]:-unknown}." >&2
+}
+trap installer_error ERR
 REPO_REF="${AVAL_BOT_REF:-main}"
 REMOTE_TMP=""
 NO_START=0
@@ -90,7 +95,7 @@ command -v apt-get >/dev/null 2>&1 || { echo "This installer supports Debian/Ubu
 export DEBIAN_FRONTEND=noninteractive
 echo "[1/7] Installing system dependencies..."
 apt-get update -y
-apt-get install -y python3 python3-venv python3-pip ca-certificates
+apt-get install -y python3 python3-venv python3-pip ca-certificates curl tar
 
 mkdir -p "$INSTALL_DIR"
 
@@ -256,6 +261,12 @@ systemctl enable "$SERVICE_NAME"
 if [[ "$NO_START" -eq 0 ]]; then
     echo "[6/7] Starting service..."
     systemctl restart "$SERVICE_NAME"
+    sleep 2
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "Service failed to start. Last logs:" >&2
+        journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+        exit 1
+    fi
 else
     echo "[6/7] Service installed but not started (--no-start)."
 fi
