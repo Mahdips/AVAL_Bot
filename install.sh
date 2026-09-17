@@ -284,7 +284,7 @@ chmod 600 "$ENV_FILE"
 
 # Validate the installed application before registering it.
 echo "[5/7] Validating Python application..."
-runuser -u avalbot -- "$VENV_DIR/bin/python" -m py_compile "$INSTALL_DIR/bot.py"
+runuser -u avalbot -- env WEB_ONLY=1 "$VENV_DIR/bin/python" -m py_compile "$INSTALL_DIR/bot.py"
 
 # Keep Telegram polling and Web Panel in separate services. A Telegram/network
 # failure must not take the admin panel offline.

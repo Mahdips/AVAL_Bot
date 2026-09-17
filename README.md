@@ -47,7 +47,7 @@ curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | sudo bash -s -- --update
 ```
 
-پس از نصب:
+پس از نصب، Bot و Web Panel دو سرویس مستقل هستند:
 
 ```bash
 sudo systemctl status aval-bot --no-pager
@@ -55,6 +55,8 @@ sudo systemctl status aval-bot-web --no-pager
 sudo journalctl -u aval-bot -f
 sudo journalctl -u aval-bot-web -f
 ```
+
+Web Panel برای اجرا به اتصال Telegram یا معتبر بودن `BOT_TOKEN` نیاز ندارد؛ Bot تلگرام به‌صورت جداگانه به `BOT_TOKEN` معتبر نیاز دارد.
 
 ## اطلاعات مهم نصب
 

@@ -532,9 +532,12 @@ async def web_logout(request: Request):
 DATABASE_FILE = Path(os.getenv("DATABASE_FILE", str(BASE_DIR / "bot.db")))
 if not DATABASE_FILE.is_absolute():
     DATABASE_FILE = BASE_DIR / DATABASE_FILE
+WEB_ONLY_MODE = os.getenv("WEB_ONLY", "0") == "1"
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 
-if not BOT_TOKEN:
+# The Web Panel is intentionally able to start without Telegram credentials.
+# The Telegram service still requires a valid BOT_TOKEN.
+if not BOT_TOKEN and not WEB_ONLY_MODE:
     raise RuntimeError(
         "مقدار BOT_TOKEN داخل فایل .env تنظیم نشده است."
     )
@@ -652,7 +655,9 @@ try:
 except (RuntimeError, ValueError) as error:
     raise RuntimeError("TELEGRAM_PROXY تنظیم شده اما قابل استفاده نیست؛ آدرس Proxy را بررسی کن.") from error
 
-bot = Bot(token=BOT_TOKEN, session=telegram_session)
+bot = None
+if BOT_TOKEN and not WEB_ONLY_MODE:
+    bot = Bot(token=BOT_TOKEN, session=telegram_session)
 dp = Dispatcher(storage=MemoryStorage())
 
 
@@ -8262,6 +8267,8 @@ async def reject_topup_callback(
 
 
 async def main():
+    if not bot:
+        raise RuntimeError("BOT_TOKEN is required when starting the Telegram bot.")
     init_database()
     global main_keyboard
     main_keyboard = get_main_keyboard()
@@ -8282,7 +8289,7 @@ async def main():
         web_config = uvicorn.Config(
             app,
             host=os.getenv("WEB_HOST", "127.0.0.1"),
-            port=int(os.getenv("WEB_PORT", "8000")),
+            port=int(os.getenv("WEB_PORT", "8090")),
             log_level="info",
         )
         web_server = uvicorn.Server(web_config)
@@ -8319,6 +8326,6 @@ if __name__ == "__main__":
     import asyncio
     import uvicorn
     if os.getenv("WEB_ONLY", "0") == "1":
-        uvicorn.run(app, host=os.getenv("WEB_HOST", "127.0.0.1"), port=int(os.getenv("WEB_PORT", "8000")))
+        uvicorn.run(app, host=os.getenv("WEB_HOST", "127.0.0.1"), port=int(os.getenv("WEB_PORT", "8090")))
     else:
         asyncio.run(main())
