@@ -11,7 +11,7 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
     SOURCE_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd)"
 fi
 DRY_RUN=0
-REPO_URL="${AVAL_BOT_REPO:-}"
+REPO_URL="${AVAL_BOT_REPO:-https://github.com/Mahdips/AVAL_Bot}"
 REPO_REF="${AVAL_BOT_REF:-main}"
 REMOTE_TMP=""
 NO_START=0
@@ -33,7 +33,7 @@ Options:
 
 Environment:
   AVAL_BOT_INSTALL_DIR=/opt/aval-bot
-  AVAL_BOT_REPO=https://github.com/USERNAME/REPOSITORY
+  AVAL_BOT_REPO=https://github.com/Mahdips/AVAL_Bot
   AVAL_BOT_REF=main
 EOF
 }
@@ -133,14 +133,14 @@ prompt_secret() {
     local current="${2:-}"
     if [[ -n "$current" ]]; then
         printf '%s already exists; keep it? [Y/n]: ' "$label"
-        read -r answer
+        read -r answer </dev/tty
         if [[ ! "$answer" =~ ^[Nn]$ ]]; then
             printf '%s' "$current"
             return
         fi
     fi
     local value
-    read -r -s -p "$label: " value
+    read -r -s -p "$label: " value </dev/tty
     printf '\n' >&2
     printf '%s' "$value"
 }
@@ -150,14 +150,14 @@ prompt_value() {
     local current="${2:-}"
     if [[ -n "$current" ]]; then
         printf '%s already exists; keep it? [Y/n]: ' "$label"
-        read -r answer
+        read -r answer </dev/tty
         if [[ ! "$answer" =~ ^[Nn]$ ]]; then
             printf '%s' "$current"
             return
         fi
     fi
     local value
-    read -r -p "$label: " value
+    read -r -p "$label: " value </dev/tty
     printf '%s' "$value"
 }
 
