@@ -12,20 +12,20 @@
 - مدیریت کاربران، موجودی دستی، آموزش، ادمین‌ها و بک‌آپ
 
 
-# ===== نصب مستقیم از GitHub =====
+# ===== نصب مستقیم با یک دستور از GitHub =====
 
-بعد از ساخت Repository عمومی، روی Ubuntu/Debian این دستور را اجرا کن:
+بعد از عمومی‌کردن Repository، روی Ubuntu/Debian فقط همین یک دستور را اجرا کن:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | sudo bash -s -- --repo https://github.com/Mahdips/AVAL_Bot --ref main
+curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | sudo bash
 ```
 
-نصاب از GitHub نسخهٔ branch مشخص‌شده را دانلود می‌کند، سپس Python، وابستگی‌ها و سرویس `systemd` را نصب می‌کند. در اولین اجرا فقط مقادیر ضروری `.env` را به‌صورت مخفی می‌پرسد.
+نصاب خودش Repository درست را می‌شناسد و ورودی‌های `BOT_TOKEN`، `ADMIN_IDS` و `WEB_ADMIN_PASSWORD` را از ترمینال SSH می‌گیرد. هنگام واردکردن رمز وب چیزی روی صفحه دیده نمی‌شود؛ این طبیعی است.
 
-برای آپدیت از همان Repository:
+برای آپدیت نسخهٔ جدید هم فقط همین را اجرا کن:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | sudo bash -s -- --repo https://github.com/Mahdips/AVAL_Bot --ref main --update
+curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | sudo bash -s -- --update
 ```
 
 اگر Repository خصوصی است، این روش بدون احراز هویت کار نمی‌کند؛ برای Repository خصوصی بهتر است ابتدا با SSH/GitHub CLI کلون کنی یا از یک Release/دریافت امن استفاده کنی. هیچ‌وقت `.env`، `bot.db`، Token ربات، API Token پنل یا اطلاعات کارت را در Repository عمومی قرار نده.
