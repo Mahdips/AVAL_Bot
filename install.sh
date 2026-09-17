@@ -116,12 +116,13 @@ cp -f "$SOURCE_DIR/install.sh" "$INSTALL_DIR/install.sh"
 chmod 750 "$INSTALL_DIR/install.sh"
 
 VENV_DIR="$INSTALL_DIR/.venv"
+echo "[3/7] Preparing Python environment and dependencies..."
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-    echo "[3/7] Creating Python virtual environment..."
     python3 -m venv "$VENV_DIR"
 fi
 "$VENV_DIR/bin/python" -m pip install --upgrade pip
 "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+echo "[3/7] Python dependencies ready. Configuring environment..."
 
 ENV_FILE="$INSTALL_DIR/.env"
 touch "$ENV_FILE"
@@ -132,6 +133,12 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE" || true
 set +a
+
+if [[ ! -t 0 && ! -r /dev/tty ]]; then
+    echo "Interactive terminal is required for first installation." >&2
+    echo "Run the command directly in SSH, not from a background job." >&2
+    exit 1
+fi
 
 prompt_secret() {
     local label="$1"
@@ -202,6 +209,12 @@ if [[ -z "${WEB_ADMIN_PASSWORD:-}" ]]; then
     set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
 fi
 
+# Reload values after writing the dotenv file so validation and systemd use the same config.
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
 # Safe defaults; do not overwrite user choices.
 set_default() {
     local key="$1"
@@ -262,16 +275,4 @@ if [[ "$NO_START" -eq 0 ]]; then
     echo "[6/7] Starting service..."
     systemctl restart "$SERVICE_NAME"
     sleep 2
-    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo "Service failed to start. Last logs:" >&2
-        journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
-        exit 1
-    fi
-else
-    echo "[6/7] Service installed but not started (--no-start)."
-fi
-
-echo "[7/7] Installation complete."
-echo "Service status: systemctl status $SERVICE_NAME"
-echo "Live logs:      journalctl -u $SERVICE_NAME -f"
-echo "Web panel:      http://127.0.0.1:8000/admin"
+    if ! systemctl is-active --quiet "$SERV
