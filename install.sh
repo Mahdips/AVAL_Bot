@@ -223,13 +223,38 @@ set_default() {
         set_env_value "$key" "$value"
     fi
 }
-set_default WEB_HOST 127.0.0.1
+# Detect the server address for the Web Panel link.
+detect_server_ip() {
+    local detected=""
+    if command -v curl >/dev/null 2>&1; then
+        detected="$(curl -4fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)"
+    fi
+    if [[ -z "$detected" ]] && command -v hostname >/dev/null 2>&1; then
+        detected="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+    fi
+    if [[ -z "$detected" ]] && command -v ip >/dev/null 2>&1; then
+        detected=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)
+    fi
+    printf '%s' "$detected"
+}
+
+SERVER_IP="$(detect_server_ip)"
+[[ -n "$SERVER_IP" ]] || SERVER_IP="127.0.0.1"
+
+# Bind on all interfaces so the detected server address can open the panel.
+# Upgrade the old localhost default on existing installations too.
+if [[ -z "${WEB_HOST:-}" || "${WEB_HOST}" == "127.0.0.1" ]]; then
+    set_env_value WEB_HOST 0.0.0.0
+fi
 set_default WEB_PORT 8000
 set_default WEB_ONLY 0
 set_default WEB_WITH_BOT 1
 set_default WEB_COOKIE_SECURE 0
 set_default DATABASE_FILE bot.db
 set_default TELEGRAM_PROXY ""
+if ! grep -qE '^WEB_PUBLIC_IP=' "$ENV_FILE" || grep -qE "^WEB_PUBLIC_IP='?127\\.0\\.0\\.1'?$" "$ENV_FILE"; then
+    set_env_value WEB_PUBLIC_IP "$SERVER_IP"
+fi
 
 # Generate a secret if the project does not already have one.
 if ! grep -qE '^WEB_ADMIN_SECRET=' "$ENV_FILE"; then
@@ -275,4 +300,17 @@ if [[ "$NO_START" -eq 0 ]]; then
     echo "[6/7] Starting service..."
     systemctl restart "$SERVICE_NAME"
     sleep 2
-    if ! systemctl is-active --quiet "$SERV
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "Service failed to start. Last logs:" >&2
+        journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
+        exit 1
+    fi
+else
+    echo "[6/7] Service installed but not started (--no-start)."
+fi
+
+echo "[7/7] Installation complete."
+echo "Service status: systemctl status $SERVICE_NAME"
+echo "Live logs:      journalctl -u $SERVICE_NAME -f"
+echo "Web panel:      http://${SERVER_IP}:8000/admin"
+echo "If the panel is not reachable, allow TCP/8000 in your VPS firewall or use SSH tunneling."
