@@ -4,7 +4,9 @@ set -Eeuo pipefail
 
 INSTALL_DIR="${AVAL_BOT_INSTALL_DIR:-/opt/aval-bot}"
 SERVICE_NAME="aval-bot"
+WEB_SERVICE_NAME="aval-bot-web"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+WEB_SERVICE_FILE="/etc/systemd/system/${WEB_SERVICE_NAME}.service"
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 SOURCE_DIR=""
 if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
@@ -248,9 +250,9 @@ SERVER_IP="$(detect_server_ip)"
 if [[ -z "${WEB_HOST:-}" || "${WEB_HOST}" == "127.0.0.1" ]]; then
     set_env_value WEB_HOST 0.0.0.0
 fi
-# Use the new port for fresh installs and migrate the previous default.
-if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" ]]; then
-    set_env_value WEB_PORT 8080
+# Use port 4045 for fresh installs and migrate previous defaults.
+if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" || "${WEB_PORT}" == "8080" ]]; then
+    set_env_value WEB_PORT 4045
 fi
 set_default WEB_ONLY 0
 set_default WEB_WITH_BOT 1
@@ -284,6 +286,8 @@ chmod 600 "$ENV_FILE"
 echo "[5/7] Validating Python application..."
 runuser -u avalbot -- "$VENV_DIR/bin/python" -m py_compile "$INSTALL_DIR/bot.py"
 
+# Keep Telegram polling and Web Panel in separate services. A Telegram/network
+# failure must not take the admin panel offline.
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=AVAL Telegram VPN Bot
@@ -296,6 +300,30 @@ User=avalbot
 Group=avalbot
 WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
+Environment=WEB_WITH_BOT=0
+Environment=WEB_ONLY=0
+ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > "$WEB_SERVICE_FILE" <<EOF
+[Unit]
+Description=AVAL BOT Web Admin Panel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=avalbot
+Group=avalbot
+WorkingDirectory=$INSTALL_DIR
+EnvironmentFile=$ENV_FILE
+Environment=WEB_WITH_BOT=0
+Environment=WEB_ONLY=1
 ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/bot.py
 Restart=always
 RestartSec=10
@@ -305,23 +333,28 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable "$SERVICE_NAME"
+systemctl enable "$SERVICE_NAME" "$WEB_SERVICE_NAME"
 
 if [[ "$NO_START" -eq 0 ]]; then
-    echo "[6/7] Starting service..."
-    systemctl restart "$SERVICE_NAME"
+    echo "[6/7] Starting Telegram bot and Web Panel services..."
+    systemctl restart "$SERVICE_NAME" "$WEB_SERVICE_NAME"
     sleep 2
-    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
-        echo "Service failed to start. Last logs:" >&2
-        journalctl -u "$SERVICE_NAME" -n 80 --no-pager >&2 || true
-        exit 1
-    fi
+    failed=0
+    for service in "$SERVICE_NAME" "$WEB_SERVICE_NAME"; do
+        if ! systemctl is-active --quiet "$service"; then
+            echo "Service $service failed to start. Last logs:" >&2
+            journalctl -u "$service" -n 80 --no-pager >&2 || true
+            failed=1
+        fi
+    done
+    [[ "$failed" -eq 0 ]] || exit 1
 else
-    echo "[6/7] Service installed but not started (--no-start)."
+    echo "[6/7] Services installed but not started (--no-start)."
 fi
 
 echo "[7/7] Installation complete."
 echo "Service status: systemctl status $SERVICE_NAME"
 echo "Live logs:      journalctl -u $SERVICE_NAME -f"
 echo "Web panel:      http://${SERVER_IP}:${WEB_PORT}/admin"
-echo "If the panel is not reachable, allow TCP/${WEB_PORT} in your VPS firewall or use SSH tunneling."
+echo "Bot service:     $SERVICE_NAME"
+echo "Web service:     $WEB_SERVICE_NAME"
