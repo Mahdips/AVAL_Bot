@@ -302,7 +302,7 @@ WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
 Environment=WEB_WITH_BOT=0
 Environment=WEB_ONLY=0
-ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/bot.py
+ExecStart=/usr/bin/env WEB_WITH_BOT=0 WEB_ONLY=0 $VENV_DIR/bin/python $INSTALL_DIR/bot.py
 Restart=always
 RestartSec=10
 
@@ -324,7 +324,7 @@ WorkingDirectory=$INSTALL_DIR
 EnvironmentFile=$ENV_FILE
 Environment=WEB_WITH_BOT=0
 Environment=WEB_ONLY=1
-ExecStart=$VENV_DIR/bin/python $INSTALL_DIR/bot.py
+ExecStart=/usr/bin/env WEB_WITH_BOT=0 WEB_ONLY=1 $VENV_DIR/bin/python $INSTALL_DIR/bot.py
 Restart=always
 RestartSec=10
 
@@ -338,15 +338,29 @@ systemctl enable "$SERVICE_NAME" "$WEB_SERVICE_NAME"
 if [[ "$NO_START" -eq 0 ]]; then
     echo "[6/7] Starting Telegram bot and Web Panel services..."
     systemctl restart "$SERVICE_NAME" "$WEB_SERVICE_NAME"
-    sleep 2
     failed=0
     for service in "$SERVICE_NAME" "$WEB_SERVICE_NAME"; do
+        for attempt in $(seq 1 10); do
+            systemctl is-active --quiet "$service" && break
+            sleep 1
+        done
         if ! systemctl is-active --quiet "$service"; then
             echo "Service $service failed to start. Last logs:" >&2
             journalctl -u "$service" -n 80 --no-pager >&2 || true
             failed=1
         fi
     done
+    for attempt in $(seq 1 10); do
+        if ss -ltn 2>/dev/null | grep -qE ":${WEB_PORT}[[:space:]]"; then
+            break
+        fi
+        sleep 1
+    done
+    if ! ss -ltn 2>/dev/null | grep -qE ":${WEB_PORT}[[:space:]]"; then
+        echo "Web Panel is not listening on port ${WEB_PORT}. Last logs:" >&2
+        journalctl -u "$WEB_SERVICE_NAME" -n 80 --no-pager >&2 || true
+        failed=1
+    fi
     [[ "$failed" -eq 0 ]] || exit 1
 else
     echo "[6/7] Services installed but not started (--no-start)."
