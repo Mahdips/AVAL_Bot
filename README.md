@@ -51,14 +51,17 @@ curl -fsSL https://raw.githubusercontent.com/Mahdips/AVAL_Bot/main/install.sh | 
 
 ```bash
 sudo systemctl status aval-bot --no-pager
+sudo systemctl status aval-bot-web --no-pager
 sudo journalctl -u aval-bot -f
+sudo journalctl -u aval-bot-web -f
 ```
 
 ## اطلاعات مهم نصب
 
 - مسیر نصب: `/opt/aval-bot`
-- نام سرویس: `aval-bot`
-- Web Panel به‌صورت پیش‌فرض روی `127.0.0.1:8000` اجرا می‌شود.
+- نام سرویس بات: `aval-bot`
+- نام سرویس Web Panel: `aval-bot-web`
+- Web Panel به‌صورت پیش‌فرض روی `0.0.0.0:8090` اجرا می‌شود.
 - فایل تنظیمات در `/opt/aval-bot/.env` ذخیره می‌شود.
 - دیتابیس در `/opt/aval-bot/bot.db` ذخیره می‌شود.
 - در آپدیت، `.env` و `bot.db` قبلی حفظ می‌شوند.
@@ -69,13 +72,13 @@ sudo journalctl -u aval-bot -f
 روی کامپیوتر شخصی خود اجرا کنید:
 
 ```bash
-ssh -L 8000:127.0.0.1:8000 root@SERVER_IP
+ssh -L 8090:127.0.0.1:8090 root@SERVER_IP
 ```
 
 سپس در مرورگر باز کنید:
 
 ```text
-http://127.0.0.1:8000/admin
+http://127.0.0.1:8090/admin
 ```
 
 `SERVER_IP` را با IP سرور خود جایگزین کنید.
