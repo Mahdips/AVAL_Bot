@@ -207,6 +207,8 @@ if [[ -z "${WEB_ADMIN_PASSWORD:-}" ]]; then
     WEB_ADMIN_PASSWORD="$(prompt_secret 'WEB_ADMIN_PASSWORD')"
     [[ -n "$WEB_ADMIN_PASSWORD" ]] || { echo "WEB_ADMIN_PASSWORD is required." >&2; exit 1; }
     set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
+else
+    echo "WEB_ADMIN_PASSWORD already configured; keeping the existing admin password."
 fi
 
 # Reload values after writing the dotenv file so validation and systemd use the same config.
@@ -214,8 +216,8 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
-
-# Safe defaults; do not overwrite user choices.
+[[ -n "${WEB_ADMIN_PASSWORD:-}" ]] || { echo "WEB_ADMIN_PASSWORD is missing from $ENV_FILE" >&2; exit 1; }
+[[ -n "${BOT_TOKEN:-}" ]] || { echo "BOT_TOKEN is missing from $ENV_FILE" >&2; exit 1; }
 set_default() {
     local key="$1"
     local value="$2"
@@ -246,7 +248,10 @@ SERVER_IP="$(detect_server_ip)"
 if [[ -z "${WEB_HOST:-}" || "${WEB_HOST}" == "127.0.0.1" ]]; then
     set_env_value WEB_HOST 0.0.0.0
 fi
-set_default WEB_PORT 8000
+# Use the new port for fresh installs and migrate the previous default.
+if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" ]]; then
+    set_env_value WEB_PORT 8080
+fi
 set_default WEB_ONLY 0
 set_default WEB_WITH_BOT 1
 set_default WEB_COOKIE_SECURE 0
@@ -255,6 +260,12 @@ set_default TELEGRAM_PROXY ""
 if ! grep -qE '^WEB_PUBLIC_IP=' "$ENV_FILE" || grep -qE "^WEB_PUBLIC_IP='?127\\.0\\.0\\.1'?$" "$ENV_FILE"; then
     set_env_value WEB_PUBLIC_IP "$SERVER_IP"
 fi
+
+# Reload the final values so the service message uses the actual port.
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
 
 # Generate a secret if the project does not already have one.
 if ! grep -qE '^WEB_ADMIN_SECRET=' "$ENV_FILE"; then
@@ -312,5 +323,5 @@ fi
 echo "[7/7] Installation complete."
 echo "Service status: systemctl status $SERVICE_NAME"
 echo "Live logs:      journalctl -u $SERVICE_NAME -f"
-echo "Web panel:      http://${SERVER_IP}:8000/admin"
-echo "If the panel is not reachable, allow TCP/8000 in your VPS firewall or use SSH tunneling."
+echo "Web panel:      http://${SERVER_IP}:${WEB_PORT}/admin"
+echo "If the panel is not reachable, allow TCP/${WEB_PORT} in your VPS firewall or use SSH tunneling."
