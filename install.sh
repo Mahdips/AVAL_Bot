@@ -250,9 +250,9 @@ SERVER_IP="$(detect_server_ip)"
 if [[ -z "${WEB_HOST:-}" || "${WEB_HOST}" == "127.0.0.1" ]]; then
     set_env_value WEB_HOST 0.0.0.0
 fi
-# Use port 4045 for fresh installs and migrate previous defaults.
-if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" || "${WEB_PORT}" == "8080" ]]; then
-    set_env_value WEB_PORT 4045
+# Use browser-safe port 8090 for fresh installs and migrate previous defaults.
+if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" || "${WEB_PORT}" == "8080" || "${WEB_PORT}" == "4045" ]]; then
+    set_env_value WEB_PORT 8090
 fi
 set_default WEB_ONLY 0
 set_default WEB_WITH_BOT 1
