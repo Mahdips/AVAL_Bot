@@ -63,6 +63,7 @@ Web Panel برای اجرا به اتصال Telegram یا معتبر بودن `B
 - مسیر نصب: `/opt/aval-bot`
 - نام سرویس بات: `aval-bot`
 - نام سرویس Web Panel: `aval-bot-web`
+- سرویس Web Panel مستقل از Bot اجرا می‌شود و برای نمایش صفحه به اتصال Telegram نیاز ندارد.
 - Web Panel به‌صورت پیش‌فرض روی `0.0.0.0:8090` اجرا می‌شود.
 - فایل تنظیمات در `/opt/aval-bot/.env` ذخیره می‌شود.
 - دیتابیس در `/opt/aval-bot/bot.db` ذخیره می‌شود.

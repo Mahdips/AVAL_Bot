@@ -145,34 +145,60 @@ fi
 prompt_secret() {
     local label="$1"
     local current="${2:-}"
+    local value
     if [[ -n "$current" ]]; then
-        printf '%s already exists; keep it? [Y/n]: ' "$label"
-        read -r answer </dev/tty
-        if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-            printf '%s' "$current"
+        read -r -s -p "$label (Enter = keep existing): " value </dev/tty
+    else
+        read -r -s -p "$label: " value </dev/tty
+    fi
+    printf '\n' >&2
+    if [[ -n "$value" ]]; then
+        printf '%s' "$value"
+    else
+        printf '%s' "$current"
+    fi
+}
+
+prompt_password() {
+    local label="$1"
+    local current="${2:-}"
+    local value confirmation
+    while true; do
+        if [[ -n "$current" ]]; then
+            read -r -s -p "$label (Enter = keep existing): " value </dev/tty
+            if [[ -z "$value" ]]; then
+                printf '\n' >&2
+                printf '%s' "$current"
+                return
+            fi
+        else
+            read -r -s -p "$label: " value </dev/tty
+        fi
+        printf '\n' >&2
+        read -r -s -p "$label again: " confirmation </dev/tty
+        printf '\n' >&2
+        if [[ "$value" == "$confirmation" && -n "$value" ]]; then
+            printf '%s' "$value"
             return
         fi
-    fi
-    local value
-    read -r -s -p "$label: " value </dev/tty
-    printf '\n' >&2
-    printf '%s' "$value"
+        echo "Passwords do not match; please try again." >&2
+    done
 }
 
 prompt_value() {
     local label="$1"
     local current="${2:-}"
-    if [[ -n "$current" ]]; then
-        printf '%s already exists; keep it? [Y/n]: ' "$label"
-        read -r answer </dev/tty
-        if [[ ! "$answer" =~ ^[Nn]$ ]]; then
-            printf '%s' "$current"
-            return
-        fi
-    fi
     local value
-    read -r -p "$label: " value </dev/tty
-    printf '%s' "$value"
+    if [[ -n "$current" ]]; then
+        read -r -p "$label (Enter = keep existing): " value </dev/tty
+    else
+        read -r -p "$label: " value </dev/tty
+    fi
+    if [[ -n "$value" ]]; then
+        printf '%s' "$value"
+    else
+        printf '%s' "$current"
+    fi
 }
 
 # Use single-quoted dotenv values and escape backslashes/apostrophes.
@@ -195,8 +221,20 @@ set_env_value() {
     fi
 }
 
+validate_bot_token() {
+    printf '%s' "$1" | "$VENV_DIR/bin/python" -c 'import sys; from aiogram.utils.token import validate_token; validate_token(sys.stdin.read())' >/dev/null 2>&1
+}
+
+validate_admin_ids() {
+    [[ "$1" =~ ^[0-9]+(,[0-9]+)*$ ]]
+}
+
 if [[ -z "${BOT_TOKEN:-}" ]]; then
     BOT_TOKEN="$(prompt_secret 'BOT_TOKEN (from BotFather)')"
+    [[ -n "$BOT_TOKEN" ]] || { echo "BOT_TOKEN is required." >&2; exit 1; }
+    set_env_value BOT_TOKEN "$BOT_TOKEN"
+else
+    BOT_TOKEN="$(prompt_secret 'BOT_TOKEN (from BotFather)' "$BOT_TOKEN")"
     [[ -n "$BOT_TOKEN" ]] || { echo "BOT_TOKEN is required." >&2; exit 1; }
     set_env_value BOT_TOKEN "$BOT_TOKEN"
 fi
@@ -204,13 +242,28 @@ if [[ -z "${ADMIN_IDS:-}" ]]; then
     ADMIN_IDS="$(prompt_value 'ADMIN_IDS (numeric Telegram IDs, comma-separated)')"
     [[ -n "$ADMIN_IDS" ]] || { echo "ADMIN_IDS is required." >&2; exit 1; }
     set_env_value ADMIN_IDS "$ADMIN_IDS"
+else
+    ADMIN_IDS="$(prompt_value 'ADMIN_IDS (numeric Telegram IDs, comma-separated)' "$ADMIN_IDS")"
+    [[ -n "$ADMIN_IDS" ]] || { echo "ADMIN_IDS is required." >&2; exit 1; }
+    set_env_value ADMIN_IDS "$ADMIN_IDS"
 fi
 if [[ -z "${WEB_ADMIN_PASSWORD:-}" ]]; then
-    WEB_ADMIN_PASSWORD="$(prompt_secret 'WEB_ADMIN_PASSWORD')"
+    WEB_ADMIN_PASSWORD="$(prompt_password 'WEB_ADMIN_PASSWORD')"
     [[ -n "$WEB_ADMIN_PASSWORD" ]] || { echo "WEB_ADMIN_PASSWORD is required." >&2; exit 1; }
     set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
 else
-    echo "WEB_ADMIN_PASSWORD already configured; keeping the existing admin password."
+    WEB_ADMIN_PASSWORD="$(prompt_password 'WEB_ADMIN_PASSWORD' "$WEB_ADMIN_PASSWORD")"
+    [[ -n "$WEB_ADMIN_PASSWORD" ]] || { echo "WEB_ADMIN_PASSWORD is required." >&2; exit 1; }
+    set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
+fi
+
+if ! validate_bot_token "$BOT_TOKEN"; then
+    echo "BOT_TOKEN format is invalid. Get the exact token from BotFather and run the installer again." >&2
+    exit 1
+fi
+if ! validate_admin_ids "$ADMIN_IDS"; then
+    echo "ADMIN_IDS must contain numeric Telegram IDs separated by commas." >&2
+    exit 1
 fi
 
 # Reload values after writing the dotenv file so validation and systemd use the same config.
@@ -372,3 +425,4 @@ echo "Live logs:      journalctl -u $SERVICE_NAME -f"
 echo "Web panel:      http://${SERVER_IP}:${WEB_PORT}/admin"
 echo "Bot service:     $SERVICE_NAME"
 echo "Web service:     $WEB_SERVICE_NAME"
+echo "Admin password:  configured (not displayed)"
