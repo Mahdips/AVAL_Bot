@@ -10,6 +10,8 @@ import uuid
 import hmac
 import hashlib
 import socket
+import subprocess
+# System service operations are delegated to the fixed helper; no arbitrary commands are accepted.
 from urllib.parse import quote, urlsplit, urlunsplit
 from io import BytesIO
 from pathlib import Path
@@ -43,6 +45,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Template
 from aiogram.fsm.storage.memory import MemoryStorage
+
+from admin_control import build_service_command, update_env_file, validate_config_updates, SERVICE_NAMES
 
 BASE_DIR = Path(__file__).parent
 ENV_FILE = BASE_DIR / ".env"
@@ -139,7 +143,8 @@ function initFlashAsToast(){var flash=document.querySelector(".flash");if(flash)
 function ensureModal(){var existing=document.getElementById("confirm-modal");if(existing)return existing;var overlay=document.createElement("div");overlay.className="modal-overlay";overlay.id="confirm-modal";overlay.innerHTML='<div class="modal"><div class="m-ic">!</div><h3 id="confirm-title">حذف این مورد؟</h3><p id="confirm-body">این عملیات قابل بازگشت نیست.</p><div class="m-actions"><button type="button" class="btn secondary" data-cancel>انصراف</button><button type="button" class="btn danger" data-confirm>حذف کن</button></div></div>';document.body.appendChild(overlay);return overlay}
 function initDeleteModals(){var forms=document.querySelectorAll("form[data-confirm-delete]");if(!forms.length)return;var overlay=ensureModal();var titleEl=overlay.querySelector("#confirm-title");var bodyEl=overlay.querySelector("#confirm-body");var cancelBtn=overlay.querySelector("[data-cancel]");var confirmBtn=overlay.querySelector("[data-confirm]");var pendingForm=null;function close(){overlay.classList.remove("show");pendingForm=null}forms.forEach(function(form){form.addEventListener("submit",function(e){if(form.dataset.confirmed==="1")return;e.preventDefault();pendingForm=form;titleEl.textContent=form.getAttribute("data-confirm-title")||"حذف این مورد؟";bodyEl.textContent=form.getAttribute("data-confirm-delete")||"این عملیات قابل بازگشت نیست.";overlay.classList.add("show")})});cancelBtn.addEventListener("click",close);overlay.addEventListener("click",function(e){if(e.target===overlay)close()});document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});confirmBtn.addEventListener("click",function(){if(!pendingForm)return;pendingForm.dataset.confirmed="1";pendingForm.requestSubmit?pendingForm.requestSubmit():pendingForm.submit();close()})}
 function initHomeLayoutDrag(){var box=document.getElementById("layout");if(!box)return;var dragEl=null;box.querySelectorAll(".layout-row").forEach(function(row){row.addEventListener("dragover",function(e){e.preventDefault()});row.addEventListener("drop",function(e){e.preventDefault();if(!dragEl||dragEl.parentNode===row&&dragEl===e.target)return;var target=e.target.closest(".layout-btn");if(target&&target.parentNode===row){var rect=target.getBoundingClientRect();row.insertBefore(dragEl,(e.clientY-rect.top)>rect.height/2?target.nextSibling:target)}else{row.appendChild(dragEl)}})});box.querySelectorAll(".layout-btn").forEach(function(btn){btn.addEventListener("dragstart",function(){dragEl=btn;btn.classList.add("dragging")});btn.addEventListener("dragend",function(){btn.classList.remove("dragging");dragEl=null})})}
-document.addEventListener("DOMContentLoaded",function(){initDrawer();initFlashAsToast();initDeleteModals();initHomeLayoutDrag()});
+function initPasswordToggles(){document.querySelectorAll("input[type=password]").forEach(function(input){var button=document.createElement("button");button.type="button";button.className="btn secondary";button.style.marginTop="8px";button.textContent="نمایش رمز";button.addEventListener("click",function(){var visible=input.type==="text";input.type=visible?"password":"text";button.textContent=visible?"نمایش رمز":"مخفی‌کردن رمز"});input.parentNode.appendChild(button)})}
+document.addEventListener("DOMContentLoaded",function(){initDrawer();initFlashAsToast();initDeleteModals();initHomeLayoutDrag();initPasswordToggles()});
 })();
 """
 
@@ -162,10 +167,10 @@ WEB_ADMIN_HTML = ("""
 </body></html>
 """).replace("__CSS__", WEB_ADMIN_CSS).replace("__JS__", WEB_ADMIN_JS)
 
-WEB_NAV = [("dashboard", "نمای کلی", "🏠"), ("panels", "زیرساخت پنل‌ها", "🌐"), ("products", "ساخت و مدیریت Config", "🛍"), ("home", "جایگذاری دکمه‌های Bot", "🧩"), ("users", "کاربران", "👥")]
+WEB_NAV = [("dashboard", "نمای کلی", "🏠"), ("runtime", "کنترل Bot و تنظیمات", "⚙️"), ("panels", "زیرساخت پنل‌ها", "🌐"), ("products", "ساخت و مدیریت Config", "🛍"), ("home", "جایگذاری دکمه‌های Bot", "🧩"), ("users", "کاربران", "👥")]
 
 def web_render(section, title, body, request, flash=None):
-    return HTMLResponse(Template(WEB_ADMIN_HTML).render(nav=WEB_NAV, section=section, title=title, body=body, flash=flash or request.cookies.get("aval_flash")))
+    return HTMLResponse(Template(WEB_ADMIN_HTML).render(nav=WEB_NAV, section=section, title=title, body=body, flash=flash or request.query_params.get("flash") or request.cookies.get("aval_flash")))
 
 def web_guard(request):
     token=request.cookies.get(WEB_SESSION_COOKIE)
@@ -198,7 +203,9 @@ button:hover{filter:brightness(1.07)}
 <p>رمز پنل را وارد کنید.</p>
 <label>رمز عبور</label>
 <input name='password' type='password' required autofocus placeholder='••••••••'>
+<button type='button' id='toggle-login-password' style='width:100%;margin-top:10px;background:transparent;color:var(--muted);border:1px solid var(--glass-border-2);border-radius:var(--radius-sm);padding:10px;cursor:pointer'>نمایش رمز</button>
 <button>ورود</button>
+<script>document.getElementById('toggle-login-password').addEventListener('click',function(){var input=document.querySelector("input[name=password]");var visible=input.type==='text';input.type=visible?'password':'text';this.textContent=visible?'نمایش رمز':'مخفی‌کردن رمز'})</script>
 """ + (f"<div class='err-box'>{error}</div>" if error else "") + """
 </form></body></html>""")
 
@@ -206,13 +213,95 @@ button:hover{filter:brightness(1.07)}
 async def web_root():
     return RedirectResponse("/admin", status_code=307)
 
+@app.post("/admin/runtime/{service}/{action}")
+async def web_runtime_service(service: str, action: str, request: Request):
+    if not web_guard(request):
+        return RedirectResponse("/admin", status_code=303)
+    try:
+        command = build_service_command(service, action)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        ok = result.returncode == 0
+    except (ValueError, OSError, subprocess.SubprocessError):
+        ok = False
+    message = "عملیات با موفقیت انجام شد." if ok else "عملیات انجام نشد؛ وضعیت دسترسی systemd را بررسی کن."
+    return RedirectResponse(f"/admin?section=runtime&flash={quote(message)}", status_code=303)
+
+
+@app.post("/admin/runtime/config")
+async def web_runtime_config(request: Request):
+    if not web_guard(request):
+        return RedirectResponse("/admin", status_code=303)
+    form = await request.form()
+    bot_token = str(form.get("bot_token") or "").strip()
+    admin_ids = str(form.get("admin_ids") or "").strip()
+    password = str(form.get("web_password") or "")
+    password_again = str(form.get("web_password_again") or "")
+    if bot_token and len(bot_token) < 10:
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("Bot Token واردشده معتبر نیست."), status_code=303)
+    if password or password_again:
+        if password != password_again or len(password) < 8:
+            return RedirectResponse("/admin?section=runtime&flash=" + quote("رمزها برابر نیستند یا کمتر از ۸ کاراکتر هستند."), status_code=303)
+    updates = {}
+    if bot_token:
+        updates["BOT_TOKEN"] = bot_token
+    if admin_ids:
+        updates["ADMIN_IDS"] = admin_ids
+    if password:
+        updates["WEB_ADMIN_PASSWORD"] = password
+    if not updates:
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("تغییری برای ذخیره وارد نشده است."), status_code=303)
+    try:
+        validate_config_updates(updates)
+        update_env_file(ENV_FILE, updates)
+    except ValueError:
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("اطلاعات تنظیمات معتبر نیست."), status_code=303)
+    try:
+        subprocess.run(build_service_command("bot", "restart"), capture_output=True, timeout=20)
+        subprocess.run(build_service_command("web", "restart"), capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return RedirectResponse("/admin?section=runtime&flash=" + quote("تنظیمات ذخیره شد و سرویس‌ها برای اعمال تغییرات restart شدند."), status_code=303)
+
+
+@app.post("/admin/runtime/delete-bot")
+async def web_runtime_delete_bot(request: Request):
+    if not web_guard(request):
+        return RedirectResponse("/admin", status_code=303)
+    try:
+        subprocess.run(["sudo", "-n", "/usr/local/sbin/aval-bot-admin", "bot", "remove"], capture_output=True, timeout=20, check=False)
+        message = "سرویس Bot حذف شد؛ Web Panel و دیتابیس دست‌نخورده باقی ماندند."
+    except (OSError, subprocess.SubprocessError):
+        message = "حذف سرویس Bot انجام نشد."
+    return RedirectResponse("/admin?section=runtime&flash=" + quote(message), status_code=303)
+
+
 @app.get("/admin", response_class=HTMLResponse)
 async def web_admin(request: Request):
     if not web_guard(request): return web_login_page()
     section=request.query_params.get("section","dashboard")
     connection=get_db()
     stats={"users":connection.execute("select count(*) from users").fetchone()[0],"products":connection.execute("select count(*) from products where active=1 and category_id is not null").fetchone()[0],"panels":connection.execute("select count(*) from xui_panels where active=1").fetchone()[0],"orders":connection.execute("select count(*) from orders where status='approved'").fetchone()[0]}
-    if section=="panels":
+    if section=="runtime":
+        service_rows = []
+        for service_key, service_label in (("bot", "ربات تلگرام"), ("web", "وب‌پنل")):
+            try:
+                result = subprocess.run(["sudo", "-n", "/usr/local/sbin/aval-bot-admin", service_key, "status"], capture_output=True, text=True, timeout=5)
+                active = result.returncode == 0 and result.stdout.strip() == "active"
+            except (OSError, subprocess.SubprocessError):
+                active = False
+            service_rows.append({"key": service_key, "label": service_label, "active": active})
+        env_values = {}
+        if ENV_FILE.exists():
+            for line in ENV_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+                if "=" in line and not line.lstrip().startswith("#"):
+                    key, value = line.split("=", 1)
+                    env_values[key.strip()] = value.strip().strip("'").strip('"')
+        masked_token = "تنظیم شده (مخفی)" if env_values.get("BOT_TOKEN") else "تنظیم نشده"
+        masked_password = "تنظیم شده (مخفی)" if env_values.get("WEB_ADMIN_PASSWORD") else "تنظیم نشده"
+        masked_ids = "تنظیم شده (مخفی)" if env_values.get("ADMIN_IDS") else "تنظیم نشده"
+        body = Template("""<div class='card'><h2>کنترل سرویس‌ها</h2><p class='muted'>از این بخش می‌توانی Bot و Web Panel را مستقل کنترل کنی.</p><div class='table-wrap'><table><tr><th>سرویس</th><th>وضعیت</th><th>عملیات</th></tr>{% for s in services %}<tr><td>{{s['label']}}</td><td>{% if s['active'] %}<span class='badge'>فعال</span>{% else %}<span class='badge off'>متوقف</span>{% endif %}</td><td><div class='actions'><form method='post' action='/admin/runtime/{{s['key']}}/start'><button class='btn secondary'>Start</button></form><form method='post' action='/admin/runtime/{{s['key']}}/stop'><button class='btn danger'>Stop</button></form><form method='post' action='/admin/runtime/{{s['key']}}/restart'><button class='btn'>Restart</button></form>{% if s['key']=='bot' %}<form method='post' action='/admin/runtime/delete-bot' onsubmit="return confirm('سرویس Bot حذف شود؟ Web Panel و دیتابیس حفظ می‌شوند.')"><button class='btn danger'>حذف Bot</button></form>{% endif %}</div></td></tr>{% endfor %}</table></div></div><div class='card'><h2>تنظیمات نصب</h2><p class='muted'>مقدارهای حساس نمایش داده نمی‌شوند. رمزها قابل مشاهده نیستند؛ فقط می‌توانی آن‌ها را تغییر بدهی.</p><div class='table-wrap'><table><tr><th>تنظیم</th><th>مقدار امن</th></tr><tr><td>BOT_TOKEN</td><td><code>{{token}}</code></td></tr><tr><td>ADMIN_IDS</td><td><code>{{ids}}</code></td></tr><tr><td>WEB_ADMIN_PASSWORD</td><td>{{password}}</td></tr></table></div><h3>تغییر تنظیمات</h3><form method='post' action='/admin/runtime/config' class='form-grid'><div class='field'><label>Bot Token جدید (خالی = بدون تغییر)</label><input name='bot_token' type='password' data-reveal autocomplete='new-password'></div><div class='field'><label>Admin IDs جدید (مثلاً 123,456؛ خالی = بدون تغییر)</label><input name='admin_ids' inputmode='numeric'></div><div class='field'><label>رمز Web Panel جدید (خالی = بدون تغییر)</label><input name='web_password' type='password' data-reveal autocomplete='new-password' minlength='8'></div><div class='field'><label>تکرار رمز جدید</label><input name='web_password_again' type='password' data-reveal autocomplete='new-password' minlength='8'></div><div class='form-actions'><button class='btn'>ذخیره و اعمال</button></div></form></div>""").render(services=service_rows, token=masked_token, ids=masked_ids, password=masked_password)
+        title="کنترل Bot و تنظیمات"
+    elif section=="panels":
         rows=connection.execute("select id,name,base_url,active,subscription_url,api_token from xui_panels order by id desc").fetchall()
         body=Template("""<div class='card'><h2>مدیریت پنل‌های 3x-ui</h2><p class='muted'>افزودن، ویرایش، تست اتصال، inboundها و حذف پنل از همین بخش انجام می‌شود.</p><div class='actions'><a class='btn' href='/admin/panel/new'>＋ افزودن پنل</a><a class='btn secondary' href='/admin/category/new'>＋ افزودن دسته و انتخاب inbound</a><a class='btn secondary' href='/admin?section=panel-status'>📡 وضعیت و سلامت پنل‌ها</a></div></div>""" + "<div class='card'>" + "{{ table }}" + "</div>").render(table=Template("""{% if rows %}<div class='table-wrap'><table><tr><th>نام</th><th>آدرس</th><th>Subscription</th><th>وضعیت</th><th>عملیات</th></tr>{% for r in rows %}<tr><td>{{r['name']}}</td><td>{{r['base_url']}}</td><td>{% if r['subscription_url'] %}<span class='badge'>ثبت شده</span>{% else %}<span class='badge off'>ثبت نشده</span>{% endif %}</td><td>{% if r['active'] %}<span class='badge'>فعال</span>{% else %}<span class='badge off'>غیرفعال</span>{% endif %}</td><td><div class='actions'><a class='btn secondary' href='/admin/panel/{{r['id']}}'>مدیریت</a><a class='btn secondary' href='/admin/panel/{{r['id']}}/edit'>ویرایش</a><form method='post' action='/admin/panel/{{r['id']}}/delete' onsubmit="return confirm('این پنل و اتصال‌های وابسته غیرفعال شوند؟')"><button class='btn danger'>حذف</button></form></div></td></tr>{% endfor %}</table></div>{% else %}<div class='empty'><div class='ic'>🌐</div>هنوز پنلی ثبت نشده است.</div>{% endif %}""").render(rows=rows)); title="پنل‌های 3x-ui"
     elif section=="products":

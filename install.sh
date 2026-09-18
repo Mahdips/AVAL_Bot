@@ -123,7 +123,7 @@ mkdir -p "$INSTALL_DIR"
 
 # Copy application files, while never overwriting an existing database or .env.
 echo "[2/7] Copying application files to $INSTALL_DIR..."
-for item in bot.py requirements.txt .env.example README.md telegram-bot.service; do
+for item in bot.py admin_control.py requirements.txt .env.example README.md telegram-bot.service; do
     if [[ -f "$SOURCE_DIR/$item" ]]; then
         cp -f "$SOURCE_DIR/$item" "$INSTALL_DIR/$item"
     fi
@@ -404,6 +404,36 @@ RestartSec=10
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# Install a narrowly-scoped privileged helper for the Web Panel.
+cat > /usr/local/sbin/aval-bot-admin <<'ADMIN_HELPER'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+service_key="${1:-}"
+action="${2:-}"
+case "$service_key:$action" in
+    bot:start|bot:stop|bot:restart) unit="aval-bot.service" ;;
+    bot:remove)
+        /usr/bin/systemctl disable --now aval-bot.service
+        /usr/bin/rm -f /etc/systemd/system/aval-bot.service
+        /usr/bin/systemctl daemon-reload
+        exit 0
+        ;;
+    bot:status) /usr/bin/systemctl is-active aval-bot.service ; exit $? ;;
+    web:status) /usr/bin/systemctl is-active aval-bot-web.service ; exit $? ;;
+    web:start|web:stop|web:restart) unit="aval-bot-web.service" ;;
+    *) exit 2 ;;
+esac
+exec /usr/bin/systemctl "$action" "$unit"
+ADMIN_HELPER
+chmod 755 /usr/local/sbin/aval-bot-admin
+cat > /etc/sudoers.d/aval-bot-web <<SUDOERS
+avalbot ALL=(root) NOPASSWD: /usr/local/sbin/aval-bot-admin
+SUDOERS
+chmod 440 /etc/sudoers.d/aval-bot-web
+if command -v visudo >/dev/null 2>&1; then
+    visudo -cf /etc/sudoers.d/aval-bot-web >/dev/null
+fi
 
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME" "$WEB_SERVICE_NAME"
