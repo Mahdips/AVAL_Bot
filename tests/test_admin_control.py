@@ -2,20 +2,25 @@ import pytest
 
 from admin_control import (
     build_service_command,
+    update_env_file,
     update_env_text,
     validate_config_updates,
 )
 
 
-def test_update_env_text_preserves_unrelated_values_and_quotes_values():
+def test_update_env_text_preserves_unrelated_values_and_quotes_values(tmp_path):
     original = "BOT_TOKEN='old'\nADMIN_IDS='1,2'\nWEB_PORT='8090'\n"
+    target = tmp_path / ".env"
+    target.write_text(original, encoding="utf-8")
 
-    updated = update_env_text(original, {"BOT_TOKEN": "12345:abcdefghijklmnopqrstuvwxyz123456", "ADMIN_IDS": "7,8"})
+    update_env_file(target, {"BOT_TOKEN": "12345:abcdefghijklmnopqrstuvwxyz123456", "ADMIN_IDS": "7,8"})
 
-    assert "BOT_TOKEN='12345:abcdefghijklmnopqrstuvwxyz123456'" in updated
-    assert "ADMIN_IDS='7,8'" in updated
-    assert "WEB_PORT='8090'" in updated
-    assert "old" not in updated
+    result = target.read_text(encoding="utf-8")
+    assert "BOT_TOKEN='12345:abcdefghijklmnopqrstuvwxyz123456'" in result
+    assert "ADMIN_IDS='7,8'" in result
+    assert "WEB_PORT='8090'" in result
+    assert "old" not in result
+    assert not (tmp_path / ".env.tmp").exists()
 
 
 def test_validate_config_updates_rejects_unknown_keys_and_invalid_ids():

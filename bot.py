@@ -142,7 +142,7 @@ window.AvalToast=showToast;
 function initFlashAsToast(){var flash=document.querySelector(".flash");if(flash)showToast(flash.textContent.trim(),flash.classList.contains("err")?"error":"success")}
 function ensureModal(){var existing=document.getElementById("confirm-modal");if(existing)return existing;var overlay=document.createElement("div");overlay.className="modal-overlay";overlay.id="confirm-modal";overlay.innerHTML='<div class="modal"><div class="m-ic">!</div><h3 id="confirm-title">حذف این مورد؟</h3><p id="confirm-body">این عملیات قابل بازگشت نیست.</p><div class="m-actions"><button type="button" class="btn secondary" data-cancel>انصراف</button><button type="button" class="btn danger" data-confirm>حذف کن</button></div></div>';document.body.appendChild(overlay);return overlay}
 function initDeleteModals(){var forms=document.querySelectorAll("form[data-confirm-delete]");if(!forms.length)return;var overlay=ensureModal();var titleEl=overlay.querySelector("#confirm-title");var bodyEl=overlay.querySelector("#confirm-body");var cancelBtn=overlay.querySelector("[data-cancel]");var confirmBtn=overlay.querySelector("[data-confirm]");var pendingForm=null;function close(){overlay.classList.remove("show");pendingForm=null}forms.forEach(function(form){form.addEventListener("submit",function(e){if(form.dataset.confirmed==="1")return;e.preventDefault();pendingForm=form;titleEl.textContent=form.getAttribute("data-confirm-title")||"حذف این مورد؟";bodyEl.textContent=form.getAttribute("data-confirm-delete")||"این عملیات قابل بازگشت نیست.";overlay.classList.add("show")})});cancelBtn.addEventListener("click",close);overlay.addEventListener("click",function(e){if(e.target===overlay)close()});document.addEventListener("keydown",function(e){if(e.key==="Escape")close()});confirmBtn.addEventListener("click",function(){if(!pendingForm)return;pendingForm.dataset.confirmed="1";pendingForm.requestSubmit?pendingForm.requestSubmit():pendingForm.submit();close()})}
-function initHomeLayoutDrag(){var box=document.getElementById("layout");if(!box)return;var dragEl=null;box.querySelectorAll(".layout-row").forEach(function(row){row.addEventListener("dragover",function(e){e.preventDefault()});row.addEventListener("drop",function(e){e.preventDefault();if(!dragEl||dragEl.parentNode===row&&dragEl===e.target)return;var target=e.target.closest(".layout-btn");if(target&&target.parentNode===row){var rect=target.getBoundingClientRect();row.insertBefore(dragEl,(e.clientY-rect.top)>rect.height/2?target.nextSibling:target)}else{row.appendChild(dragEl)}})});box.querySelectorAll(".layout-btn").forEach(function(btn){btn.addEventListener("dragstart",function(){dragEl=btn;btn.classList.add("dragging")});btn.addEventListener("dragend",function(){btn.classList.remove("dragging");dragEl=null})})}
+function initHomeLayoutDrag(){var box=document.getElementById("layout");if(!box)return;var dragEl=null;box.querySelectorAll(".layout-row").forEach(function(row){row.addEventListener("dragover",function(e){e.preventDefault();if(e.dataTransfer)e.dataTransfer.dropEffect="move"});row.addEventListener("drop",function(e){e.preventDefault();var target=e.target.closest(".layout-btn");if(!dragEl||target===dragEl)return;if(target&&target.parentNode===row){var rect=target.getBoundingClientRect();row.insertBefore(dragEl,(e.clientY-rect.top)>rect.height/2?target.nextSibling:target)}else{row.appendChild(dragEl)}})});box.querySelectorAll(".layout-btn").forEach(function(btn){btn.addEventListener("dragstart",function(e){dragEl=btn;if(e.dataTransfer){e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain",btn.dataset.key||"")}btn.classList.add("dragging")});btn.addEventListener("dragend",function(){btn.classList.remove("dragging");dragEl=null})})}
 function initPasswordToggles(){document.querySelectorAll("input[type=password]").forEach(function(input){var button=document.createElement("button");button.type="button";button.className="btn secondary";button.style.marginTop="8px";button.textContent="نمایش رمز";button.addEventListener("click",function(){var visible=input.type==="text";input.type=visible?"password":"text";button.textContent=visible?"نمایش رمز":"مخفی‌کردن رمز"});input.parentNode.appendChild(button)})}
 document.addEventListener("DOMContentLoaded",function(){initDrawer();initFlashAsToast();initDeleteModals();initHomeLayoutDrag();initPasswordToggles()});
 })();
@@ -253,13 +253,23 @@ async def web_runtime_config(request: Request):
     try:
         validate_config_updates(updates)
         update_env_file(ENV_FILE, updates)
-    except ValueError:
-        return RedirectResponse("/admin?section=runtime&flash=" + quote("اطلاعات تنظیمات معتبر نیست."), status_code=303)
-    try:
-        subprocess.run(build_service_command("bot", "restart"), capture_output=True, timeout=20)
-        subprocess.run(build_service_command("web", "restart"), capture_output=True, timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        pass
+    except (ValueError, OSError):
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("تنظیمات معتبر نیست یا ذخیرهسازی انجام نشد."), status_code=303)
+    restarted = []
+    failed = False
+    for service_key in ("bot", "web"):
+        try:
+            result = subprocess.run(build_service_command(service_key, "restart"), capture_output=True, timeout=20)
+            if result.returncode == 0:
+                restarted.append(service_key)
+            else:
+                failed = True
+        except (OSError, subprocess.SubprocessTimeoutExpired):
+            failed = True
+    if failed and not restarted:
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("تنظیمات ذخیره شد ولی restart سرویس‌ها ناموفق بود؛ دسترسی sudoers را بررسی کن."), status_code=303)
+    if failed:
+        return RedirectResponse("/admin?section=runtime&flash=" + quote("تنظیمات ذخیره شد؛ بعضی سرویس‌ها restart شدند ولی همه موفق نبودند."), status_code=303)
     return RedirectResponse("/admin?section=runtime&flash=" + quote("تنظیمات ذخیره شد و سرویس‌ها برای اعمال تغییرات restart شدند."), status_code=303)
 
 
@@ -306,7 +316,7 @@ async def web_admin(request: Request):
         body=Template("""<div class='card'><h2>مدیریت پنل‌های 3x-ui</h2><p class='muted'>افزودن، ویرایش، تست اتصال، inboundها و حذف پنل از همین بخش انجام می‌شود.</p><div class='actions'><a class='btn' href='/admin/panel/new'>＋ افزودن پنل</a><a class='btn secondary' href='/admin/category/new'>＋ افزودن دسته و انتخاب inbound</a><a class='btn secondary' href='/admin?section=panel-status'>📡 وضعیت و سلامت پنل‌ها</a></div></div>""" + "<div class='card'>" + "{{ table }}" + "</div>").render(table=Template("""{% if rows %}<div class='table-wrap'><table><tr><th>نام</th><th>آدرس</th><th>Subscription</th><th>وضعیت</th><th>عملیات</th></tr>{% for r in rows %}<tr><td>{{r['name']}}</td><td>{{r['base_url']}}</td><td>{% if r['subscription_url'] %}<span class='badge'>ثبت شده</span>{% else %}<span class='badge off'>ثبت نشده</span>{% endif %}</td><td>{% if r['active'] %}<span class='badge'>فعال</span>{% else %}<span class='badge off'>غیرفعال</span>{% endif %}</td><td><div class='actions'><a class='btn secondary' href='/admin/panel/{{r['id']}}'>مدیریت</a><a class='btn secondary' href='/admin/panel/{{r['id']}}/edit'>ویرایش</a><form method='post' action='/admin/panel/{{r['id']}}/delete' onsubmit="return confirm('این پنل و اتصال‌های وابسته غیرفعال شوند؟')"><button class='btn danger'>حذف</button></form></div></td></tr>{% endfor %}</table></div>{% else %}<div class='empty'><div class='ic'>🌐</div>هنوز پنلی ثبت نشده است.</div>{% endif %}""").render(rows=rows)); title="پنل‌های 3x-ui"
     elif section=="products":
         rows=connection.execute("select products.*, categories.name as category_name from products left join categories on categories.id=products.category_id where products.category_id is not null order by products.id desc").fetchall()
-        body=Template("""<div class='card'><h2>ساخت و مدیریت Config</h2><p class='muted'>این تب فقط محصولات پنلی را مدیریت می‌کند؛ موجودی دستی و کانفیگ انباری در فروش استفاده نمی‌شود.</p><div class='actions'><a class='btn' href='/admin/product/new'>＋ ساخت محصول پنلی</a><a class='btn secondary' href='/admin/test'>تنظیم سرویس تست</a></div></div><div class='card'>{% if rows %}<div class='table-wrap'><table><tr><th>نام</th><th>مدت</th><th>حجم</th><th>قیمت</th><th>دسته / مدل inbound</th><th>وضعیت</th><th>عملیات</th></tr>{% for r in rows %}<tr><td>{{r['name']}}</td><td>{{r['duration_days']}} روز</td><td>{{r['volume_gb']}} GB</td><td>{{r['price']}}</td><td>{{r['category_name'] or '—'}}</td><td>{% if r['active'] %}<span class='badge'>فعال</span>{% else %}<span class='badge off'>غیرفعال</span>{% endif %}</td><td><form method='post' action='/admin/product/{{r['id']}}/delete' onsubmit="return confirm('محصول حذف شود؟ سفارش‌های قبلی حفظ می‌شوند.')"><button class='btn danger'>حذف</button></form></td></tr>{% endfor %}</table></div>{% else %}<div class='empty'><div class='ic'>🛍</div>هنوز محصولی ساخته نشده است.</div>{% endif %}</div>""").render(rows=rows); title="ساخت و مدیریت Config"
+        body=Template("""<div class='card'><h2>ساخت و مدیریت Config</h2><p class='muted'>این تب فقط محصولات پنلی را مدیریت می‌کند؛ موجودی دستی و کانفیگ انباری در فروش استفاده نمی‌شود.</p><div class='actions'><a class='btn' href='/admin/product/new'>＋ ساخت محصول پنلی</a><a class='btn secondary' href='/admin/test'>تنظیم سرویس تست</a></div></div><div class='card'>{% if rows %}<div class='table-wrap'><table><tr><th>نام</th><th>مدت</th><th>حجم</th><th>قیمت</th><th>دسته / مدل inbound</th><th>وضعیت</th><th>عملیات</th></tr>{% for r in rows %}<tr><td>{{r['name']}}</td><td>{{r['duration_days']}} روز</td><td>{{r['volume_gb']}} GB</td><td>{{r['price']}}</td><td>{{r['category_name'] or '—'}}</td><td>{% if r['active'] %}<span class='badge'>فعال</span>{% else %}<span class='badge off'>غیرفعال</span>{% endif %}</td><td><div class='actions'><a class='btn secondary' href='/admin/product/{{r['id']}}/edit'>✏️ ویرایش</a><form method='post' action='/admin/product/{{r['id']}}/delete' onsubmit="return confirm('محصول حذف شود؟ سفارش‌های قبلی حفظ می‌شوند.')"><button class='btn danger'>حذف</button></form></div></td></tr>{% endfor %}</table></div>{% else %}<div class='empty'><div class='ic'>🛍</div>هنوز محصولی ساخته نشده است.</div>{% endif %}</div>""").render(rows=rows); title="ساخت و مدیریت Config"
     elif section=="public-products":
         rows=connection.execute("select products.*, categories.name as category_name from products join categories on categories.id=products.category_id join xui_panels on xui_panels.id=categories.panel_id where products.active=1 and categories.active=1 and xui_panels.active=1 order by products.id desc").fetchall()
         body=Template("""<div class='card'><h2>محصولات قابل نمایش برای کاربر</h2><p class='muted'>فقط محصولاتی که کاربر می‌تواند ببیند و بخرد؛ همه از پنل 3x-ui ساخته می‌شوند.</p><div class='table-wrap'><table><tr><th>نام</th><th>مدت</th><th>حجم</th><th>قیمت</th><th>مدل پنل</th></tr>{% for r in rows %}<tr><td>{{r['name']}}</td><td>{{r['duration_days']}} روز</td><td>{{r['volume_gb']}} GB</td><td>{{r['price']}}</td><td>{{r['category_name']}}</td></tr>{% else %}<tr><td colspan='5'>محصول فعالی برای فروش وجود ندارد.</td></tr>{% endfor %}</table></div></div>""").render(rows=rows); title="محصولات قابل نمایش برای کاربر"
@@ -535,6 +545,36 @@ async def web_product_create(request: Request):
     if create_product(name, days, volume, price, category_id) is None:
         return web_render("products", "افزودن محصول پنلی", "<div class='card'>محصولی با این نام قبلاً ثبت شده است.</div>", request)
     return RedirectResponse("/admin?section=products", status_code=303)
+
+@app.get("/admin/product/{product_id}/edit", response_class=HTMLResponse)
+async def web_product_edit(product_id: int, request: Request):
+    if not web_guard(request): return RedirectResponse("/admin", status_code=303)
+    con = get_db()
+    product = con.execute("""select p.*, c.name as category_name from products p left join categories c on c.id=p.category_id where p.id=?""", (product_id,)).fetchone()
+    categories = con.execute("select id,name,panel_id from categories where active=1 order by name").fetchall()
+    con.close()
+    if not product:
+        return web_render("products", "ویرایش Config", "<div class='card'>محصول پیدا نشد.</div>", request)
+    options = "".join(f"<option value='{c['id']}' {'selected' if c['id'] == product['category_id'] else ''}>{html.escape(c['name'])} (پنل {c['panel_id']})</option>" for c in categories)
+    body = f"""<div class='card'><h2>ویرایش Config</h2><form method='post' class='form-grid'><div class='field'><label>نام محصول</label><input name='name' value='{html.escape(str(product['name']), quote=True)}' required></div><div class='field'><label>مدت (روز)</label><input name='duration_days' type='number' min='1' value='{product['duration_days']}' required></div><div class='field'><label>حجم (GB)</label><input name='volume_gb' type='number' min='0.01' step='0.01' value='{product['volume_gb']}' required></div><div class='field'><label>قیمت (تومان)</label><input name='price' type='number' min='0' step='1' value='{product['price']}' required></div><div class='field'><label>مدل inbound</label><select name='category_id' required>{options}</select></div><div class='form-actions'><button class='btn'>ذخیره تغییرات</button><a href='/admin?section=products' class='btn secondary'>انصراف</a></div></form></div>"""
+    return web_render("products", "ویرایش Config", body, request)
+
+
+@app.post("/admin/product/{product_id}/edit")
+async def web_product_edit_save(product_id: int, request: Request):
+    if not web_guard(request): return RedirectResponse("/admin", status_code=303)
+    form = await request.form()
+    try:
+        name = str(form.get("name") or "").strip()
+        days = int(form.get("duration_days")); volume = float(form.get("volume_gb")); price = float(form.get("price")); category_id = int(form.get("category_id"))
+        category = get_category_with_panel(category_id)
+        if not name or days <= 0 or volume <= 0 or price < 0 or category is None or not category_inbound_ids(category): raise ValueError
+    except (TypeError, ValueError):
+        return web_render("products", "ویرایش Config", "<div class='card'>اطلاعات نامعتبر است یا مدل inbound فعال نیست.</div>", request)
+    if not update_product(product_id, name, days, volume, price, category_id):
+        return web_render("products", "ویرایش Config", "<div class='card'>ویرایش انجام نشد؛ نام تکراری یا محصول غیرفعال است.</div>", request)
+    return RedirectResponse("/admin?section=products", status_code=303)
+
 
 @app.get("/admin/test", response_class=HTMLResponse)
 async def web_test_settings(request: Request):
@@ -1827,6 +1867,11 @@ class AdminStates(StatesGroup):
     waiting_product_volume = State()
     waiting_product_price = State()
     waiting_product_category = State()
+    waiting_product_edit_name = State()
+    waiting_product_edit_days = State()
+    waiting_product_edit_volume = State()
+    waiting_product_edit_price = State()
+    waiting_product_edit_category = State()
 
     waiting_stock_product_id = State()
     waiting_stock_configs = State()
@@ -1990,6 +2035,7 @@ def products_keyboard():
 def product_management_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ ساخت محصول پنلی", callback_data="product_create")],
+        [InlineKeyboardButton(text="✏️ ویرایش Config", callback_data="product_edit_list")],
         [InlineKeyboardButton(text="📊 گزارش محصولات پنلی", callback_data="product_report")],
         [InlineKeyboardButton(text="🗑 غیرفعال‌کردن محصول", callback_data="product_delete_list")],
         [InlineKeyboardButton(text="🔙 بازگشت", callback_data="admin_back")],
@@ -2001,6 +2047,16 @@ def product_delete_keyboard():
     for product in get_products():
         buttons.append([InlineKeyboardButton(
             text=f"🗑 {product['name']}", callback_data=f"product_delete:{product['id']}"
+        )])
+    buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="product_management")])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def product_edit_keyboard():
+    buttons = []
+    for product in get_products():
+        buttons.append([InlineKeyboardButton(
+            text=f"✏️ {product['name']}", callback_data=f"product_edit:{product['id']}"
         )])
     buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="product_management")])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
@@ -2735,6 +2791,54 @@ def create_product(
 
     connection.close()
     return product_id
+
+
+def update_product(
+    product_id: int,
+    name: str,
+    duration_days: int,
+    volume_gb: float,
+    price: float,
+    category_id: int,
+) -> bool:
+    """Update a panel-backed product without touching historical orders."""
+    name = (name or "").strip()
+    try:
+        duration_days = int(duration_days)
+        volume_gb = float(volume_gb)
+        price = float(price)
+        category_id = int(category_id)
+    except (TypeError, ValueError):
+        return False
+    if not name or duration_days <= 0 or volume_gb <= 0 or price < 0:
+        return False
+
+    connection = get_db()
+    try:
+        category = connection.execute(
+            "SELECT id FROM categories WHERE id=? AND active=1",
+            (category_id,),
+        ).fetchone()
+        panel = connection.execute(
+            "SELECT p.id FROM xui_panels p JOIN categories c ON c.panel_id=p.id "
+            "WHERE c.id=? AND p.active=1",
+            (category_id,),
+        ).fetchone()
+        if category is None or panel is None:
+            return False
+        cursor = connection.execute(
+            """UPDATE products
+               SET name=?, duration_days=?, volume_gb=?, price=?, category_id=?
+               WHERE id=? AND active=1""",
+            (name, duration_days, volume_gb, price, category_id, product_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    except sqlite3.IntegrityError:
+        connection.rollback()
+        return False
+    finally:
+        connection.close()
 
 
 def get_products():
@@ -4337,7 +4441,7 @@ async def send_subscription_to_user(telegram_id: int, title: str, links: list[st
         BufferedInputFile(qr_png_bytes(subscription), filename="subscription-qr.png"),
         caption=caption,
         parse_mode="HTML",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -4372,7 +4476,7 @@ async def send_product_to_user(result: dict):
         f"<code>{safe_config}</code>\n\n"
         "لینک‌ها را کپی کن و داخل برنامه اتصال وارد کن.",
         parse_mode="HTML",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -4632,7 +4736,7 @@ async def auto_approve_worker():
                         f"👛 موجودی جدید: "
                         f"<b>{result['new_balance']:,.0f}</b> تومان",
                         parse_mode="HTML",
-                        reply_markup=main_keyboard,
+                        reply_markup=get_main_keyboard(),
                     )
 
                 except Exception as error:
@@ -4724,7 +4828,7 @@ async def check_join_callback(
 
         await callback.message.answer(
             "✅ عضویت شما تأیید شد. خوش آمدی!",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
 
         await callback.answer(
@@ -4765,7 +4869,7 @@ async def start_handler(
     await message.answer(
         "سلام 👋\n"
         "به ربات فروش اشتراک خوش آمدی.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -4804,7 +4908,7 @@ async def exit_admin_handler(
 
     await message.answer(
         "از پنل مدیریت خارج شدی.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -4905,6 +5009,89 @@ async def product_create_callback(callback: CallbackQuery, state: FSMContext):
 async def product_report_callback(callback: CallbackQuery):
     await callback.answer()
     await products_report(callback.message)
+
+
+@dp.callback_query(F.data == "product_edit_list")
+async def product_edit_list_callback(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True); return
+    products = get_products()
+    if not products:
+        await callback.answer("محصول فعالی وجود ندارد.", show_alert=True); return
+    await callback.message.edit_text("محصولی را برای ویرایش Config انتخاب کن:", reply_markup=product_edit_keyboard())
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("product_edit:"))
+async def product_edit_callback(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("دسترسی ندارید.", show_alert=True); return
+    try: product_id = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer("شناسه محصول نامعتبر است.", show_alert=True); return
+    product = get_product(product_id)
+    if product is None:
+        await callback.answer("محصول فعال پیدا نشد.", show_alert=True); return
+    await state.clear(); await state.update_data(edit_product_id=product_id, edit_product_category_id=product["category_id"])
+    await state.set_state(AdminStates.waiting_product_edit_name)
+    await callback.message.answer(f"نام جدید محصول را بفرست. مقدار فعلی: {html.escape(product['name'])}", reply_markup=cancel_keyboard, parse_mode="HTML")
+    await callback.answer()
+
+
+@dp.message(AdminStates.waiting_product_edit_name)
+async def receive_product_edit_name(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    name = (message.text or "").strip()
+    if not name: await message.answer("نام نمی‌تواند خالی باشد."); return
+    await state.update_data(edit_product_name=name); await state.set_state(AdminStates.waiting_product_edit_days)
+    await message.answer("مدت جدید را برحسب روز بفرست:", reply_markup=cancel_keyboard)
+
+
+@dp.message(AdminStates.waiting_product_edit_days)
+async def receive_product_edit_days(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    value = (message.text or "").strip()
+    if not value.isdigit() or int(value) <= 0: await message.answer("مدت باید عدد صحیح بیشتر از صفر باشد."); return
+    await state.update_data(edit_product_days=int(value)); await state.set_state(AdminStates.waiting_product_edit_volume)
+    await message.answer("حجم جدید را برحسب GB بفرست:", reply_markup=cancel_keyboard)
+
+
+@dp.message(AdminStates.waiting_product_edit_volume)
+async def receive_product_edit_volume(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    try: volume = float((message.text or "").strip().replace(",", ""))
+    except ValueError: await message.answer("حجم واردشده معتبر نیست."); return
+    if volume <= 0: await message.answer("حجم باید بیشتر از صفر باشد."); return
+    await state.update_data(edit_product_volume=volume); await state.set_state(AdminStates.waiting_product_edit_price)
+    await message.answer("قیمت جدید را برحسب تومان بفرست:", reply_markup=cancel_keyboard)
+
+
+@dp.message(AdminStates.waiting_product_edit_price)
+async def receive_product_edit_price(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    try: price = float((message.text or "").strip().replace(",", ""))
+    except ValueError: await message.answer("قیمت واردشده معتبر نیست."); return
+    if price < 0: await message.answer("قیمت نمی‌تواند منفی باشد."); return
+    data = await state.get_data(); categories = get_all_categories(active_only=True)
+    if not categories: await state.clear(); await message.answer("هیچ مدل Inbound فعالی وجود ندارد.", reply_markup=admin_keyboard); return
+    await state.update_data(edit_product_price=price); await state.set_state(AdminStates.waiting_product_edit_category)
+    buttons = [[InlineKeyboardButton(text=f"🌐 {row['name']} ← پنل {row['panel_id']}", callback_data=f"product_edit_category:{row['id']}")] for row in categories]
+    buttons.append([InlineKeyboardButton(text="❌ لغو", callback_data="close_message")])
+    await message.answer("مدل Inbound جدید را انتخاب کن:", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@dp.callback_query(F.data.startswith("product_edit_category:"))
+async def product_edit_category_callback(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id): await callback.answer("دسترسی ندارید.", show_alert=True); return
+    try: category_id = int(callback.data.split(":", 1)[1])
+    except ValueError: await callback.answer("دسته نامعتبر است.", show_alert=True); return
+    category = get_category_with_panel(category_id)
+    if category is None or not category_inbound_ids(category): await callback.answer("مدل Inbound معتبر نیست.", show_alert=True); return
+    data = await state.get_data()
+    ok = update_product(data.get("edit_product_id"), data.get("edit_product_name"), data.get("edit_product_days"), data.get("edit_product_volume"), data.get("edit_product_price"), category_id)
+    await state.clear()
+    await callback.message.edit_text("✅ Config با موفقیت ویرایش شد." if ok else "❌ ویرایش انجام نشد؛ نام تکراری یا محصول نامعتبر است.", reply_markup=product_management_keyboard())
+    await callback.answer()
 
 
 @dp.callback_query(F.data == "product_stock")
@@ -5999,6 +6186,7 @@ async def receive_panel_subscription_update(message: Message, state: FSMContext)
     await message.answer("✅ لینک Subscription پنل به‌روزرسانی شد.", reply_markup=admin_keyboard)
 
 
+@dp.callback_query(F.data.startswith("xui_category_view:"))
 async def xui_category_view_callback(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("دسترسی ندارید.", show_alert=True)
@@ -6772,7 +6960,7 @@ async def buy_start(
     if not products:
         await message.answer(
             "در حال حاضر محصولی برای فروش وجود ندارد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -6992,7 +7180,7 @@ async def free_trial_handler(
         await message.answer(
             "⛔ شما قبلاً از تست رایگان استفاده کرده‌اید.\n"
             "هر کاربر فقط یک‌بار می‌تواند تست رایگان دریافت کند.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7027,7 +7215,7 @@ async def free_trial_handler(
         await message.answer(
             "😔 در حال حاضر موجودی تست رایگان تمام شده است.\n"
             "بعداً دوباره تلاش کن.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7042,14 +7230,14 @@ async def free_trial_handler(
 
         await message.answer(
             "خطایی رخ داد. دوباره تلاش کن.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
     if not result["success"]:
         await message.answer(
             f"⛔ {result['message']}",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7060,7 +7248,7 @@ async def free_trial_handler(
         "🔐 <b>کانفیگ تست شما:</b>\n"
         f"<code>{safe_config}</code>\n\n"
         "کانفیگ را کپی کن و داخل برنامه اتصال وارد کن.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
         parse_mode="HTML",
     )
 
@@ -7177,7 +7365,7 @@ async def cancel_order_callback(
 
     await callback.message.answer(
         "❌ سفارش لغو شد.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await callback.answer(
@@ -7208,7 +7396,7 @@ async def receive_photo_receipt(
 
         await message.answer(
             "سفارش فعالی برای ارسال رسید وجود ندارد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7219,7 +7407,7 @@ async def receive_photo_receipt(
 
         await message.answer(
             "سفارش پیدا نشد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7234,7 +7422,7 @@ async def receive_photo_receipt(
 
         await message.answer(
             "این سفارش قبلاً رسید گرفته یا بررسی شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7253,7 +7441,7 @@ async def receive_photo_receipt(
 
         await message.answer(
             "رسید این سفارش قبلاً ثبت شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7263,7 +7451,7 @@ async def receive_photo_receipt(
         "✅ رسید پرداخت با موفقیت دریافت شد.\n\n"
         "رسید برای ادمین ارسال شد. بعد از تأیید ادمین، "
         "اشتراک برایت ارسال می‌شود.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await send_order_to_admins(order_id)
@@ -7286,7 +7474,7 @@ async def receive_text_receipt(
 
         await message.answer(
             "ارسال رسید لغو شد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7301,7 +7489,7 @@ async def receive_text_receipt(
 
         await message.answer(
             "سفارش فعالی برای ارسال رسید وجود ندارد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7312,7 +7500,7 @@ async def receive_text_receipt(
 
         await message.answer(
             "سفارش پیدا نشد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7327,7 +7515,7 @@ async def receive_text_receipt(
 
         await message.answer(
             "این سفارش قبلاً رسید گرفته یا بررسی شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7350,7 +7538,7 @@ async def receive_text_receipt(
 
         await message.answer(
             "رسید این سفارش قبلاً ثبت شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7360,7 +7548,7 @@ async def receive_text_receipt(
         "✅ متن رسید دریافت شد.\n\n"
         "رسید برای ادمین ارسال شد. لطفا تا تایید رسید منتظر بمانید."
         " .بعد از تایید اشتراک خودکار برای شما ارسال میشود",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await send_order_to_admins(order_id)
@@ -7511,7 +7699,7 @@ async def reject_order_callback(
                 "❌ رسید پرداخت شما رد شد.\n\n"
                 "اگر فکر می‌کنی اشتباهی رخ داده، "
                 "با پشتیبانی تماس بگیر.",
-                reply_markup=main_keyboard,
+                reply_markup=get_main_keyboard(),
             )
         except Exception as error:
             print(
@@ -7559,7 +7747,7 @@ async def my_subscriptions_handler(
         await message.answer(
             "📦 هنوز هیچ اشتراک فعالی نداری.\n\n"
             "برای خرید، از دکمه «🛒 خرید اشتراک» استفاده کن.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7729,7 +7917,7 @@ async def tutorial_client_callback(
             f"📚 ویدیوی آموزش اتصال "
             f"«{os_data['label']} - {client_label}» "
             "ارسال شد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
 
     except Exception as error:
@@ -7740,7 +7928,7 @@ async def tutorial_client_callback(
 
         await callback.message.answer(
             "❌ خطا در ارسال ویدیو. با پشتیبانی تماس بگیر.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
 
     await callback.answer()
@@ -7755,14 +7943,14 @@ async def support_handler(
             "🆘 <b>پشتیبانی</b>\n\n"
             "برای ارتباط با پشتیبانی روی آیدی زیر بزن:\n"
             f"{html.escape(SUPPORT_USERNAME)}",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
             parse_mode="HTML",
         )
         return
 
     await message.answer(
         "🆘 برای پشتیبانی، پیام خود را همین‌جا ارسال کن.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
 
@@ -7834,7 +8022,7 @@ async def receive_topup_amount(
 
         await message.answer(
             "شارژ کیف پول لغو شد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -7972,7 +8160,7 @@ async def cancel_topup_callback(
 
     await callback.message.answer(
         "❌ درخواست شارژ لغو شد.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await callback.answer("لغو شد.")
@@ -8069,7 +8257,7 @@ async def receive_topup_photo_receipt(
 
         await message.answer(
             "درخواست فعالی برای ارسال رسید وجود ندارد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8080,7 +8268,7 @@ async def receive_topup_photo_receipt(
 
         await message.answer(
             "درخواست پیدا نشد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8095,7 +8283,7 @@ async def receive_topup_photo_receipt(
 
         await message.answer(
             "این درخواست قبلاً رسید گرفته یا بررسی شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8114,7 +8302,7 @@ async def receive_topup_photo_receipt(
 
         await message.answer(
             "رسید این درخواست قبلاً ثبت شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8124,7 +8312,7 @@ async def receive_topup_photo_receipt(
         "✅ متن رسید دریافت شد.\n\n"
         "رسید برای ادمین ارسال شد. لطفا تا تایید رسید منتظر بمانید."
         " .بعد از تایید اشتراک خودکار برای شما ارسال میشود",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await send_topup_to_admins(topup_id)
@@ -8143,7 +8331,7 @@ async def receive_topup_text_receipt(
 
         await message.answer(
             "ارسال رسید لغو شد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8156,7 +8344,7 @@ async def receive_topup_text_receipt(
 
         await message.answer(
             "درخواست فعالی برای ارسال رسید وجود ندارد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8167,7 +8355,7 @@ async def receive_topup_text_receipt(
 
         await message.answer(
             "درخواست پیدا نشد.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8182,7 +8370,7 @@ async def receive_topup_text_receipt(
 
         await message.answer(
             "این درخواست قبلاً رسید گرفته یا بررسی شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8205,7 +8393,7 @@ async def receive_topup_text_receipt(
 
         await message.answer(
             "رسید این درخواست قبلاً ثبت شده است.",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
         return
 
@@ -8215,7 +8403,7 @@ async def receive_topup_text_receipt(
         "✅ متن رسید دریافت شد.\n\n"
         "رسید برای ادمین ارسال شد. بعد از تأیید ادمین، "
         "کیف پول شما شارژ می‌شود.",
-        reply_markup=main_keyboard,
+        reply_markup=get_main_keyboard(),
     )
 
     await send_topup_to_admins(topup_id)
@@ -8272,7 +8460,7 @@ async def approve_topup_callback(
             f"👛 موجودی جدید: "
             f"<b>{result['new_balance']:,.0f}</b> تومان",
             parse_mode="HTML",
-            reply_markup=main_keyboard,
+            reply_markup=get_main_keyboard(),
         )
 
     except Exception as error:
@@ -8331,7 +8519,7 @@ async def reject_topup_callback(
                 "❌ رسید شارژ کیف پول شما رد شد.\n\n"
                 "اگر فکر می‌کنی اشتباهی رخ داده، "
                 "با پشتیبانی تماس بگیر.",
-                reply_markup=main_keyboard,
+                reply_markup=get_main_keyboard(),
             )
         except Exception as error:
             print(

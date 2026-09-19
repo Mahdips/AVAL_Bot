@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -67,5 +68,11 @@ def build_service_command(service: str, action: str) -> list[str]:
 def update_env_file(path: str | Path, updates: dict[str, str]) -> None:
     """Atomically update the installer dotenv file without exposing values."""
     target = Path(path)
-    target.write_text(update_env_text(target.read_text(encoding="utf-8"), updates), encoding="utf-8")
+    new_text = update_env_text(target.read_text(encoding="utf-8"), updates)
+    tmp_path = target.with_name(target.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as handle:
+        handle.write(new_text)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp_path, target)
     target.chmod(0o600)

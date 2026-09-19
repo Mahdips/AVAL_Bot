@@ -123,7 +123,8 @@ mkdir -p "$INSTALL_DIR"
 
 # Copy application files, while never overwriting an existing database or .env.
 echo "[2/7] Copying application files to $INSTALL_DIR..."
-for item in bot.py admin_control.py requirements.txt .env.example README.md telegram-bot.service; do
+mkdir -p "$INSTALL_DIR/tests"
+for item in bot.py admin_control.py aval-bot-menu.sh requirements.txt .env.example README.md tests/test_admin_control.py tests/test_terminal_menu.py tests/test_product_edit.py tests/test_product_config_layout.py; do
     if [[ -f "$SOURCE_DIR/$item" ]]; then
         cp -f "$SOURCE_DIR/$item" "$INSTALL_DIR/$item"
     fi
@@ -136,6 +137,9 @@ if [[ ! -f "$INSTALL_DIR/bot.db" && -f "$SOURCE_DIR/bot.db" ]]; then
 fi
 cp -f "$SOURCE_DIR/install.sh" "$INSTALL_DIR/install.sh"
 chmod 750 "$INSTALL_DIR/install.sh"
+if [[ -f "$INSTALL_DIR/aval-bot-menu.sh" ]]; then
+    install -m 755 "$INSTALL_DIR/aval-bot-menu.sh" /usr/local/bin/aval-bot-menu
+fi
 
 VENV_DIR="$INSTALL_DIR/.venv"
 echo "[3/7] Preparing Python environment and dependencies..."
@@ -471,6 +475,7 @@ fi
 
 echo "[7/7] Installation complete."
 echo "Service status: systemctl status $SERVICE_NAME"
+echo "Terminal panel:  sudo aval-bot-menu"
 echo "Live logs:      journalctl -u $SERVICE_NAME -f"
 echo "Web panel:      http://${SERVER_IP}:${WEB_PORT}/admin"
 echo "Bot service:     $SERVICE_NAME"
