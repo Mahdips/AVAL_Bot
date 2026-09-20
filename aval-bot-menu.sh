@@ -93,19 +93,19 @@ remove_bot_service() {
 }
 
 purge_bot() {
-    echo '⛔ این گزینه کل ربات را به‌طور کامل پاک می‌کند:'
-    echo '    - سرویس‌های aval-bot و aval-bot-web متوقف و حذف می‌شوند'
-    echo '    - کل پوشه نصب (/opt/aval-bot) پاک می‌شود'
-    echo '    - منوی ترمینال، helper و دسترسی sudo مربوطه پاک می‌شوند'
+    echo 'This removes the ENTIRE bot installation:'
+    echo '    - aval-bot and aval-bot-web services are stopped and removed'
+    echo '    - The whole install directory (/opt/aval-bot) is deleted'
+    echo '    - Terminal menu, privileged helper and sudoers entry are removed'
     echo
-    echo '💾 قبل از حذف، یک کپی از .env و bot.db در مسیر زیر نگه داشته می‌شود:'
-    echo "    /root/aval-bot-backup-<تاریخ>"
+    echo 'A copy of .env and bot.db is saved before removal at:'
+    echo '    /root/aval-bot-backup-<timestamp>'
     echo
-    echo '⚠️  این عملیات قابل بازگشت نیست.'
+    echo 'This cannot be undone.'
     read -r -p 'Type PURGE to confirm: ' confirmation </dev/tty
     [[ "$confirmation" == "PURGE" ]] || { echo 'Cancelled.'; return 0; }
 
-    # ۱) نگه‌داری یک کپی امن از تنظیمات و دیتابیس پیش از حذف
+    # 1) Save a safe copy of config and database before removal
     backup_root="/root/aval-bot-backup-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$backup_root"
     if [[ -f "$INSTALL_DIR/.env" ]]; then
@@ -120,21 +120,21 @@ purge_bot() {
     chmod -R 600 "$backup_root" 2>/dev/null || true
     echo "Backup of config and database saved to: $backup_root"
 
-    # ۲) توقف و غیرفعال‌سازی هر دو سرویس
+    # 2) Stop and disable both services
     systemctl disable --now "$BOT_SERVICE" 2>/dev/null || true
     systemctl disable --now "$WEB_SERVICE" 2>/dev/null || true
 
-    # ۳) حذف واحدهای systemd
+    # 3) Remove systemd units
     rm -f "/etc/systemd/system/${BOT_SERVICE}.service"
     rm -f "/etc/systemd/system/${WEB_SERVICE}.service"
     systemctl daemon-reload
 
-    # ۴) حذف helper، sudoers و منوی ترمینال
+    # 4) Remove helper, sudoers and terminal menu
     rm -f /usr/local/sbin/aval-bot-admin
     rm -f /etc/sudoers.d/aval-bot-web
     rm -f /usr/local/bin/aval-bot-menu
 
-    # ۵) حذف حساب سرویس و پوشه نصب
+    # 5) Remove service account and install directory
     userdel --system avalbot 2>/dev/null || true
     rm -rf "$INSTALL_DIR"
 
