@@ -167,6 +167,8 @@ if [[ ! -t 0 && ! -r /dev/tty ]]; then
 fi
 
 prompt_secret() {
+    # Legacy hidden prompt, kept for reuse; installation uses prompt_secret_show
+    # below so the user can see what they type during first setup.
     local label="$1"
     local current="${2:-}"
     local value
@@ -189,17 +191,17 @@ prompt_password() {
     local value confirmation
     while true; do
         if [[ -n "$current" ]]; then
-            read -r -s -p "$label (Enter = keep existing): " value </dev/tty
+            read -r -p "$label (Enter = keep existing): " value </dev/tty
             if [[ -z "$value" ]]; then
                 printf '\n' >&2
                 printf '%s' "$current"
                 return
             fi
         else
-            read -r -s -p "$label: " value </dev/tty
+            read -r -p "$label: " value </dev/tty
         fi
         printf '\n' >&2
-        read -r -s -p "$label again: " confirmation </dev/tty
+        read -r -p "$label again: " confirmation </dev/tty
         printf '\n' >&2
         if [[ "$value" == "$confirmation" && -n "$value" ]]; then
             printf '%s' "$value"
@@ -207,6 +209,25 @@ prompt_password() {
         fi
         echo "Passwords do not match; please try again." >&2
     done
+}
+
+prompt_secret_show() {
+    # مانند prompt_secret ولی با قابلیت نمایش مقدار هنگام تایپ؛
+    # فقط برای ورود اول نصب است و مقدار در هیچ لاگی چاپ نمی‌شود.
+    local label="$1"
+    local current="${2:-}"
+    local value
+    if [[ -n "$current" ]]; then
+        read -r -p "$label (Enter = keep existing): " value </dev/tty
+    else
+        read -r -p "$label: " value </dev/tty
+    fi
+    printf '\n' >&2
+    if [[ -n "$value" ]]; then
+        printf '%s' "$value"
+    else
+        printf '%s' "$current"
+    fi
 }
 
 prompt_value() {
@@ -254,11 +275,11 @@ validate_admin_ids() {
 }
 
 if [[ -z "${BOT_TOKEN:-}" ]]; then
-    BOT_TOKEN="$(prompt_secret 'BOT_TOKEN (from BotFather)')"
+    BOT_TOKEN="$(prompt_secret_show 'BOT_TOKEN (from BotFather)')"
     [[ -n "$BOT_TOKEN" ]] || { echo "BOT_TOKEN is required." >&2; exit 1; }
     set_env_value BOT_TOKEN "$BOT_TOKEN"
 else
-    BOT_TOKEN="$(prompt_secret 'BOT_TOKEN (from BotFather)' "$BOT_TOKEN")"
+    BOT_TOKEN="$(prompt_secret_show 'BOT_TOKEN (from BotFather)' "$BOT_TOKEN")"
     [[ -n "$BOT_TOKEN" ]] || { echo "BOT_TOKEN is required." >&2; exit 1; }
     set_env_value BOT_TOKEN "$BOT_TOKEN"
 fi
@@ -280,6 +301,13 @@ else
     [[ -n "$WEB_ADMIN_PASSWORD" ]] || { echo "WEB_ADMIN_PASSWORD is required." >&2; exit 1; }
     set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
 fi
+
+echo
+echo "بررسی مقادیر واردشده (نمایش داده می‌شوند تا اشتباه تایپ نباشد):"
+echo "  BOT_TOKEN:        ${BOT_TOKEN}"
+echo "  ADMIN_IDS:        ${ADMIN_IDS}"
+echo "  WEB_ADMIN_PASSWORD: ${WEB_ADMIN_PASSWORD}"
+echo
 
 if ! validate_bot_token "$BOT_TOKEN"; then
     echo "BOT_TOKEN format is invalid. Get the exact token from BotFather and run the installer again." >&2
@@ -473,11 +501,44 @@ else
     echo "[6/7] Services installed but not started (--no-start)."
 fi
 
+# Color codes for the success banner (disabled when output is not a TTY).
+if [[ -t 1 ]]; then
+    C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_GREEN=$'\033[0;32m'
+    C_CYAN=$'\033[0;36m'; C_YELLOW=$'\033[0;33m'; C_RED=$'\033[0;31m'
+else
+    C_RESET=""; C_BOLD=""; C_GREEN=""; C_CYAN=""; C_YELLOW=""; C_RED=""
+fi
+
 echo "[7/7] Installation complete."
-echo "Service status: systemctl status $SERVICE_NAME"
-echo "Terminal panel:  sudo aval-bot-menu"
-echo "Live logs:      journalctl -u $SERVICE_NAME -f"
-echo "Web panel:      http://${SERVER_IP}:${WEB_PORT}/admin"
-echo "Bot service:     $SERVICE_NAME"
-echo "Web service:     $WEB_SERVICE_NAME"
-echo "Admin password:  configured (not displayed)"
+echo
+echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
+echo "${C_GREEN}${C_BOLD} ✅ نصب با موفقیت انجام شد${C_RESET}"
+echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
+echo
+echo "${C_BOLD}📡 وضعیت سرویس‌ها:${C_RESET}"
+if systemctl is-active --quiet "$SERVICE_NAME"; then
+    echo "  ربات تلگرام:   ${C_GREEN}فعال${C_RESET}"
+else
+    echo "  ربات تلگرام:   ${C_RED}متوقف${C_RESET}"
+fi
+if systemctl is-active --quiet "$WEB_SERVICE_NAME"; then
+    echo "  وب‌پنل:        ${C_GREEN}فعال${C_RESET}"
+else
+    echo "  وب‌پنل:        ${C_RED}متوقف${C_RESET}"
+fi
+echo
+echo "${C_BOLD}🌐 آدرس وب‌پنل:${C_RESET}"
+echo "  ${C_CYAN}http://${SERVER_IP}:${WEB_PORT}/admin${C_RESET}"
+echo
+echo "${C_BOLD}🛠 پنل مدیریت ترمینال:${C_RESET}"
+echo "  ${C_CYAN}sudo aval-bot-menu${C_RESET}"
+echo "  ${C_CYAN}sudo bash /opt/aval-bot/aval-bot-menu.sh${C_RESET}"
+echo
+echo "${C_BOLD}📋 دستورات پرکاربرد:${C_RESET}"
+echo "  وضعیت:      ${C_CYAN}sudo systemctl status $SERVICE_NAME${C_RESET}"
+echo "  لاگ زنده:   ${C_CYAN}journalctl -u $SERVICE_NAME -f${C_RESET}"
+echo
+echo "${C_BOLD}تنظیمات ذخیره‌شده:${C_RESET}"
+echo "  BOT_TOKEN:        ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+echo "  ADMIN_IDS:        ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+echo "  WEB_ADMIN_PASSWORD: ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"

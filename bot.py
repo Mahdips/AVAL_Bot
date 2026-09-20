@@ -723,13 +723,13 @@ if REQUIRED_CHANNEL and not REQUIRED_CHANNEL.startswith("@"):
 
 try:
     BACKUP_INTERVAL_HOURS = int(
-        os.getenv("BACKUP_INTERVAL_HOURS", "24")
+        os.getenv("BACKUP_INTERVAL_HOURS", "6")
     )
 except ValueError:
-    BACKUP_INTERVAL_HOURS = 24
+    BACKUP_INTERVAL_HOURS = 6
 
 if BACKUP_INTERVAL_HOURS < 1:
-    BACKUP_INTERVAL_HOURS = 24
+    BACKUP_INTERVAL_HOURS = 6
 
 
 # ساختار سیستم‌عامل‌ها و کلاینت‌های آموزش اتصال.
@@ -1681,15 +1681,19 @@ def init_database():
             xui_email TEXT,
             subscription_url TEXT,
             sub_id TEXT,
+            duration_days INTEGER,
+            volume_gb REAL,
 
             FOREIGN KEY(product_id)
                 REFERENCES products(id)
         )
         """
     )
+    # اسنپ‌شات مدت/حجم در لحظه خرید روی خود سفارش ثبت می‌شود تا
+    # تغییر یا حذف محصول بعدی روی سفارش‌های قدیمی اثر نگذارد.
 
     # افزودن ستون‌های اشتراک برای دیتابیس‌های قدیمی
-    for column in ("subscription_url", "sub_id"):
+    for column in ("subscription_url", "sub_id", "duration_days", "volume_gb"):
         try:
             connection.execute(f"ALTER TABLE orders ADD COLUMN {column} TEXT")
             connection.commit()
@@ -3518,10 +3522,12 @@ def create_order(
             amount,
             status,
             created_at,
-            expires_at
+            expires_at,
+            duration_days,
+            volume_gb
         )
         VALUES (
-            ?, ?, ?, 'pending_payment', ?, ?
+            ?, ?, ?, 'pending_payment', ?, ?, ?, ?
         )
         """,
         (
@@ -3534,6 +3540,8 @@ def create_order(
             expires_at.isoformat(
                 timespec="seconds"
             ),
+            int(product["duration_days"]) if product["duration_days"] is not None else 0,
+            float(product["volume_gb"]) if product["volume_gb"] is not None else 0.0,
         ),
     )
 
@@ -3696,6 +3704,24 @@ def approve_manual_order(
                 "message": "سفارش پیدا نشد.",
             }
 
+        # اول اسنپ‌شات خود سفارش (لحظه خرید)، سپس fallback روی جدول محصول.
+        duration_days = None
+        volume_gb = None
+        if order["duration_days"] is not None:
+            try:
+                duration_days = int(order["duration_days"])
+            except (TypeError, ValueError):
+                duration_days = None
+        if order["volume_gb"] is not None:
+            try:
+                volume_gb = float(order["volume_gb"])
+            except (TypeError, ValueError):
+                volume_gb = None
+        if duration_days is None:
+            duration_days = int(order["duration_days"]) if order["duration_days"] is not None else 0
+        if volume_gb is None:
+            volume_gb = float(order["volume_gb"]) if order["volume_gb"] is not None else 0.0
+
         if order["status"] == "approved":
             connection.rollback()
 
@@ -3783,8 +3809,8 @@ def approve_manual_order(
             "success": True,
             "telegram_id": order["telegram_id"],
             "product_name": order["product_name"],
-            "duration_days": order["duration_days"],
-            "volume_gb": order["volume_gb"],
+            "duration_days": duration_days,
+            "volume_gb": volume_gb,
             "price": order["price"],
             "config": inventory["config"],
         }
@@ -3847,6 +3873,29 @@ def _finish_xui_order(order_id: int, approved_by: int, email: str, links: list[s
         if order is None or order["status"] != "provisioning":
             connection.rollback()
             return {"success": False, "message": "این سفارش دیگر قابل پردازش نیست."}
+        # مدت/حجم اول از اسنپ‌شات خود سفارش (لحظه خرید) خوانده می‌شود تا
+        # ویرایش یا حذف محصول روی سفارش‌های قدیمی اثر نگذارد. اگر دیتابیس
+        # قدیمی است و ستون خالی است، از جدول products می‌خوانیم.
+        product = connection.execute(
+            """SELECT products.name, products.duration_days, products.volume_gb
+               FROM products WHERE products.id = ?""", (order["product_id"],)).fetchone()
+        product_name = product["name"] if product is not None else "اشتراک"
+        duration_days = int(product["duration_days"]) if product is not None and product["duration_days"] is not None else 0
+        volume_gb = float(product["volume_gb"]) if product is not None and product["volume_gb"] is not None else 0.0
+        if order["duration_days"] is not None:
+            try:
+                duration_days = int(order["duration_days"])
+            except (TypeError, ValueError):
+                pass
+        if order["volume_gb"] is not None:
+            try:
+                volume_gb = float(order["volume_gb"])
+            except (TypeError, ValueError):
+                pass
+        if duration_days <= 0 and product is not None:
+            duration_days = int(product["duration_days"] or 0)
+        if volume_gb <= 0 and product is not None:
+            volume_gb = float(product["volume_gb"] or 0.0)
         delivered = "\n".join(links)
         approved_at = now_text()
         connection.execute(
@@ -3860,9 +3909,9 @@ def _finish_xui_order(order_id: int, approved_by: int, email: str, links: list[s
         return {
             "success": True,
             "telegram_id": order["telegram_id"],
-            "product_name": order["product_name"] if "product_name" in order.keys() else "اشتراک",
-            "duration_days": order["duration_days"] if "duration_days" in order.keys() else 0,
-            "volume_gb": order["volume_gb"] if "volume_gb" in order.keys() else 0,
+            "product_name": product_name,
+            "duration_days": duration_days,
+            "volume_gb": volume_gb,
             "price": order["amount"],
             "config": delivered,
             "xui_email": email,
@@ -4595,7 +4644,30 @@ def create_database_backup() -> Path:
     source.close()
     destination.close()
 
+    prune_database_backups(backup_dir)
+
     return backup_path
+
+
+def prune_database_backups(backup_dir: Path, keep: int = 48) -> int:
+    """فقط آخرین `keep` بک‌آپ را نگه می‌دارد تا دیسک پر نشود."""
+
+    try:
+        backups = sorted(
+            (path for path in backup_dir.glob("bot_backup_*.db") if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+        )
+    except OSError:
+        return 0
+
+    removed = 0
+    for path in backups[:-keep] if keep > 0 else backups:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            pass
+    return removed
 
 
 async def send_backup_to_admins(caption: str):
@@ -4622,12 +4694,18 @@ async def send_backup_to_admins(caption: str):
 
     backup_file = FSInputFile(backup_path)
 
+    backup_size_kb = max(
+        1,
+        int(backup_path.stat().st_size / 1024),
+    )
+
     for admin_id in ADMIN_IDS:
         try:
             await bot.send_document(
                 chat_id=admin_id,
                 document=backup_file,
-                caption=caption,
+                caption=caption
+                + f"\n📦 حجم فایل: <b>{backup_size_kb:,}</b> کیلوبایت",
                 parse_mode="HTML",
             )
         except Exception as error:
@@ -4635,6 +4713,7 @@ async def send_backup_to_admins(caption: str):
                 "خطا در ارسال بک‌آپ به ادمین:",
                 error,
             )
+            break
 
 
 async def backup_worker():
@@ -4645,7 +4724,8 @@ async def backup_worker():
 
         await send_backup_to_admins(
             "💾 <b>بک‌آپ خودکار دیتابیس</b>\n\n"
-            f"🕐 زمان: {now_text()}"
+            f"🕐 زمان: {now_text()}\n"
+            f"🔄 هر {BACKUP_INTERVAL_HOURS} ساعت"
         )
 
 
@@ -8581,6 +8661,37 @@ async def main():
         else:
             print("Telegram is currently unreachable; polling will continue and retry.")
         print("Bot started...")
+
+        # اطلاع‌رسانی خودکار نصب/راه‌اندازی موفق به سوپرادمین‌ها.
+        # فقط یک‌بار در هر استارتاپ ارسال می‌شود و مقادیر حساس را شامل نمی‌شود.
+        async def notify_admins_startup():
+            try:
+                me = await bot.get_me()
+            except Exception as error:
+                print("خطا در دریافت اطلاعات ربات:", error)
+                return
+            web_port = os.getenv("WEB_PORT", "8090")
+            # آی‌پی عمومی واقعی سرور را از .env می‌خوانیم (نصب‌کننده آن را با
+            # WEB_PUBLIC_IP تنظیم می‌کند) تا آدرس پنل درست نمایش داده شود.
+            public_ip = os.getenv("WEB_PUBLIC_IP") or os.getenv("SERVER_IP", "")
+            panel_address = f"http://{public_ip}:{web_port}/admin"
+            message = (
+                "✅ <b>نصب و راه‌اندازی با موفقیت انجام شد</b>\n\n"
+                f"🤖 ربات: @{html.escape(me.username or '')}\n"
+                f"📡 وضعیت ربات: <b>فعال</b>\n"
+                f"🌐 آدرس وب‌پنل: <code>{html.escape(panel_address)}</code>\n\n"
+                "🛠 پنل مدیریت ترمینال:\n"
+                "<code>sudo aval-bot-menu</code>\n\n"
+                "⚙️ تنظیمات از داخل وب‌پنل در بخش «کنترل Bot و تنظیمات» قابل تغییر است."
+            )
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(admin_id, message, parse_mode="HTML")
+                except Exception as error:
+                    print("خطا در ارسال پیام نصب به ادمین:", error)
+
+        asyncio.create_task(notify_admins_startup())
+
         await dp.start_polling(bot)
 
     finally:

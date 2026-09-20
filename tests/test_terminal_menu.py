@@ -21,6 +21,7 @@ def test_terminal_menu_exists_with_core_operations():
         "Update Bot",
         "Backup Database",
         "Remove Bot Service",
+        "PURGE",
         "Exit",
     ):
         assert marker in source

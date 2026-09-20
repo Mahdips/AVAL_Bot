@@ -92,6 +92,59 @@ remove_bot_service() {
     echo 'Bot service removed.'
 }
 
+purge_bot() {
+    echo '⛔ این گزینه کل ربات را به‌طور کامل پاک می‌کند:'
+    echo '    - سرویس‌های aval-bot و aval-bot-web متوقف و حذف می‌شوند'
+    echo '    - کل پوشه نصب (/opt/aval-bot) پاک می‌شود'
+    echo '    - منوی ترمینال، helper و دسترسی sudo مربوطه پاک می‌شوند'
+    echo
+    echo '💾 قبل از حذف، یک کپی از .env و bot.db در مسیر زیر نگه داشته می‌شود:'
+    echo "    /root/aval-bot-backup-<تاریخ>"
+    echo
+    echo '⚠️  این عملیات قابل بازگشت نیست.'
+    read -r -p 'Type PURGE to confirm: ' confirmation </dev/tty
+    [[ "$confirmation" == "PURGE" ]] || { echo 'Cancelled.'; return 0; }
+
+    # ۱) نگه‌داری یک کپی امن از تنظیمات و دیتابیس پیش از حذف
+    backup_root="/root/aval-bot-backup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_root"
+    if [[ -f "$INSTALL_DIR/.env" ]]; then
+        cp -p "$INSTALL_DIR/.env" "$backup_root/env-backup" 2>/dev/null || true
+    fi
+    if [[ -f "$INSTALL_DIR/bot.db" ]]; then
+        cp -p "$INSTALL_DIR/bot.db" "$backup_root/bot.db" 2>/dev/null || true
+    fi
+    for backup_file in "$INSTALL_DIR"/backups/*.db; do
+        [[ -f "$backup_file" ]] && cp -p "$backup_file" "$backup_root/" 2>/dev/null || true
+    done
+    chmod -R 600 "$backup_root" 2>/dev/null || true
+    echo "Backup of config and database saved to: $backup_root"
+
+    # ۲) توقف و غیرفعال‌سازی هر دو سرویس
+    systemctl disable --now "$BOT_SERVICE" 2>/dev/null || true
+    systemctl disable --now "$WEB_SERVICE" 2>/dev/null || true
+
+    # ۳) حذف واحدهای systemd
+    rm -f "/etc/systemd/system/${BOT_SERVICE}.service"
+    rm -f "/etc/systemd/system/${WEB_SERVICE}.service"
+    systemctl daemon-reload
+
+    # ۴) حذف helper، sudoers و منوی ترمینال
+    rm -f /usr/local/sbin/aval-bot-admin
+    rm -f /etc/sudoers.d/aval-bot-web
+    rm -f /usr/local/bin/aval-bot-menu
+
+    # ۵) حذف حساب سرویس و پوشه نصب
+    userdel --system avalbot 2>/dev/null || true
+    rm -rf "$INSTALL_DIR"
+
+    echo
+    echo 'Bot and Web Panel have been completely removed.'
+    echo "Config/database backup is at: $backup_root"
+    echo 'This menu will now exit.'
+    exit 0
+}
+
 while true; do
     clear
     echo '========================================='
@@ -109,7 +162,8 @@ while true; do
     echo '10) Change BOT_TOKEN / ADMIN_IDS / WEB_ADMIN_PASSWORD'
     echo '11) Update Bot'
     echo '12) Backup Database'
-    echo '13) Remove Bot Service'
+    echo '13) Remove Bot Service (keep web panel + data)'
+    echo '14) PURGE: Remove everything (bot + panel + files)'
     echo '0) Exit'
     printf '\nSelect an option: '
     read -r choice </dev/tty || exit 0
@@ -127,6 +181,7 @@ while true; do
         11) update_bot; pause_menu ;;
         12) backup_database; pause_menu ;;
         13) remove_bot_service; pause_menu ;;
+        14) purge_bot; pause_menu ;;
         0) exit 0 ;;
         *) echo 'Invalid option.'; pause_menu ;;
     esac
