@@ -2024,10 +2024,9 @@ def products_keyboard():
     for category_name, category_products in grouped.items():
         buttons.append([InlineKeyboardButton(text=f"📁 {category_name}", callback_data="noop")])
         for product in category_products:
-            stock = get_stock(product["id"])
             buttons.append([
                 InlineKeyboardButton(
-                    text=f"{product['name']} | {product['price']:,.0f} تومان | موجودی: {'∞' if product['category_id'] else stock}",
+                    text=f"{product['name']} | {product['price']:,.0f} تومان",
                     callback_data=f"buy:{product['id']}",
                 )
             ])
@@ -6536,8 +6535,6 @@ async def products_report(
             f"⏳ مدت: {product['duration_days']} روز\n"
             f"📊 حجم: {product['volume_gb']} GB\n"
             f"💰 قیمت: {product['price']:,.0f} تومان\n"
-            f"📦 موجودی: "
-            f"<b>{'∞ (پنلی)' if product['category_id'] else get_stock(product['id'])}</b>\n"
         )
 
     text += (

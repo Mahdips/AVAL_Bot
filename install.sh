@@ -496,9 +496,9 @@ if [[ "$NO_START" -eq 0 ]]; then
         journalctl -u "$WEB_SERVICE_NAME" -n 80 --no-pager >&2 || true
         failed=1
     fi
-    [[ "$failed" -eq 0 ]] || exit 1
 else
     echo "[6/7] Services installed but not started (--no-start)."
+    failed=0
 fi
 
 # Color codes for the success banner (disabled when output is not a TTY).
@@ -509,36 +509,54 @@ else
     C_RESET=""; C_BOLD=""; C_GREEN=""; C_CYAN=""; C_YELLOW=""; C_RED=""
 fi
 
-echo "[7/7] Installation complete."
-echo
-echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
-echo "${C_GREEN}${C_BOLD} ✅ نصب با موفقیت انجام شد${C_RESET}"
-echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
-echo
-echo "${C_BOLD}📡 وضعیت سرویس‌ها:${C_RESET}"
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-    echo "  ربات تلگرام:   ${C_GREEN}فعال${C_RESET}"
-else
-    echo "  ربات تلگرام:   ${C_RED}متوقف${C_RESET}"
+print_success_banner() {
+    echo "[7/7] Installation complete."
+    echo
+    echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
+    echo "${C_GREEN}${C_BOLD} ✅ نصب با موفقیت انجام شد${C_RESET}"
+    echo "${C_GREEN}${C_BOLD}========================================================${C_RESET}"
+    echo
+    echo "${C_BOLD}📡 وضعیت سرویس‌ها:${C_RESET}"
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        echo "  ربات تلگرام:   ${C_GREEN}فعال${C_RESET}"
+    else
+        echo "  ربات تلگرام:   ${C_RED}متوقف${C_RESET}"
+    fi
+    if systemctl is-active --quiet "$WEB_SERVICE_NAME"; then
+        echo "  وب‌پنل:        ${C_GREEN}فعال${C_RESET}"
+    else
+        echo "  وب‌پنل:        ${C_RED}متوقف${C_RESET}"
+    fi
+    echo
+    echo "${C_BOLD}🌐 آدرس وب‌پنل:${C_RESET}"
+    echo "  ${C_CYAN}http://${SERVER_IP}:${WEB_PORT}/admin${C_RESET}"
+    echo
+    echo "${C_BOLD}🛠 پنل مدیریت ترمینال:${C_RESET}"
+    echo "  ${C_CYAN}sudo aval-bot-menu${C_RESET}"
+    echo "  ${C_CYAN}sudo bash /opt/aval-bot/aval-bot-menu.sh${C_RESET}"
+    echo
+    echo "${C_BOLD}📋 دستورات پرکاربرد:${C_RESET}"
+    echo "  وضعیت:      ${C_CYAN}sudo systemctl status $SERVICE_NAME${C_RESET}"
+    echo "  لاگ زنده:   ${C_CYAN}journalctl -u $SERVICE_NAME -f${C_RESET}"
+    echo
+    echo "${C_BOLD}تنظیمات ذخیره‌شده:${C_RESET}"
+    echo "  BOT_TOKEN:          ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+    echo "  ADMIN_IDS:          ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+    echo "  WEB_ADMIN_PASSWORD: ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+}
+
+if [[ "$failed" -eq 0 ]]; then
+    print_success_banner
+    exit 0
 fi
-if systemctl is-active --quiet "$WEB_SERVICE_NAME"; then
-    echo "  وب‌پنل:        ${C_GREEN}فعال${C_RESET}"
-else
-    echo "  وب‌پنل:        ${C_RED}متوقف${C_RESET}"
-fi
+
+# سرویس‌ها بالا نیامدند، ولی همه‌چیز نصب شده است. بنر را نشان می‌دهیم
+# تا کاربر بداند آدرس پنل و دستور منو چیست، بعد خطا را گزارش می‌دهیم.
+print_success_banner
 echo
-echo "${C_BOLD}🌐 آدرس وب‌پنل:${C_RESET}"
-echo "  ${C_CYAN}http://${SERVER_IP}:${WEB_PORT}/admin${C_RESET}"
-echo
-echo "${C_BOLD}🛠 پنل مدیریت ترمینال:${C_RESET}"
-echo "  ${C_CYAN}sudo aval-bot-menu${C_RESET}"
-echo "  ${C_CYAN}sudo bash /opt/aval-bot/aval-bot-menu.sh${C_RESET}"
-echo
-echo "${C_BOLD}📋 دستورات پرکاربرد:${C_RESET}"
-echo "  وضعیت:      ${C_CYAN}sudo systemctl status $SERVICE_NAME${C_RESET}"
-echo "  لاگ زنده:   ${C_CYAN}journalctl -u $SERVICE_NAME -f${C_RESET}"
-echo
-echo "${C_BOLD}تنظیمات ذخیره‌شده:${C_RESET}"
-echo "  BOT_TOKEN:        ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
-echo "  ADMIN_IDS:        ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
-echo "  WEB_ADMIN_PASSWORD: ${C_YELLOW}تنظیم شده (مخفی)${C_RESET}"
+echo "${C_RED}${C_BOLD}⚠️  یکی از سرویس‌ها متوقف است.${C_RESET}"
+echo "برای بررسی:"
+echo "  ${C_CYAN}sudo systemctl status $SERVICE_NAME --no-pager${C_RESET}"
+echo "  ${C_CYAN}sudo journalctl -u $SERVICE_NAME -n 80 --no-pager${C_RESET}"
+echo "یا از منو: ${C_CYAN}sudo aval-bot-menu${C_RESET}"
+exit 1
