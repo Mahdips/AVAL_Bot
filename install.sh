@@ -301,6 +301,31 @@ else
     set_env_value WEB_ADMIN_PASSWORD "$WEB_ADMIN_PASSWORD"
 fi
 
+# Web Panel port. Existing installs keep their port (Enter = keep current);
+# fresh installs default to 8090 and the user can change it here.
+PORT_HINT="8090"
+if [[ -n "${WEB_PORT:-}" ]]; then
+    PORT_HINT="$WEB_PORT"
+fi
+while true; do
+    echo
+    read -r -p "Web Panel port (Enter = keep ${PORT_HINT}): " WEB_PORT_ANSWER </dev/tty
+    if [[ -z "$WEB_PORT_ANSWER" ]]; then
+        WEB_PORT_ANSWER="$PORT_HINT"
+        break
+    fi
+    if [[ "$WEB_PORT_ANSWER" =~ ^[0-9]+$ ]] && (( WEB_PORT_ANSWER >= 1024 && WEB_PORT_ANSWER <= 65535 )); then
+        WEB_PORT="$WEB_PORT_ANSWER"
+        break
+    fi
+    echo "Port must be a number between 1024 and 65535. Try again."
+done
+if [[ -n "$WEB_PORT_ANSWER" ]]; then
+    WEB_PORT="$WEB_PORT_ANSWER"
+    set_env_value WEB_PORT "$WEB_PORT"
+fi
+echo "Web Panel will use port: ${WEB_PORT}"
+
 echo
 echo "--- Please check the values you entered ---"
 echo "  BOT_TOKEN:          ${BOT_TOKEN}"
@@ -356,8 +381,9 @@ SERVER_IP="$(detect_server_ip)"
 if [[ -z "${WEB_HOST:-}" || "${WEB_HOST}" == "127.0.0.1" ]]; then
     set_env_value WEB_HOST 0.0.0.0
 fi
-# Use browser-safe port 8090 for fresh installs and migrate previous defaults.
-if [[ -z "${WEB_PORT:-}" || "${WEB_PORT}" == "8000" || "${WEB_PORT}" == "8080" || "${WEB_PORT}" == "4045" ]]; then
+# Web Panel port is chosen by the user during setup. Only fall back to
+# 8090 when the env has no port at all.
+if [[ -z "${WEB_PORT:-}" ]]; then
     set_env_value WEB_PORT 8090
 fi
 set_default WEB_ONLY 0
