@@ -49,7 +49,12 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from admin_control import build_service_command, update_env_file, validate_config_updates, SERVICE_NAMES
 
 BASE_DIR = Path(__file__).parent
-ENV_FILE = BASE_DIR / ".env"
+# On Railway the /app tree is rebuilt on every redeploy, so persisted settings
+# (token/password edits made from the web panel) must live on the volume next
+# to the database. On the VPS edition there is no DATABASE_FILE env var, so
+# the classic ./app.env location is kept.
+_persist_dir = Path(os.getenv("DATABASE_FILE", str(BASE_DIR / "bot.db"))).parent
+ENV_FILE = (_persist_dir / ".env") if os.getenv("DATABASE_FILE") else (BASE_DIR / ".env")
 load_dotenv(ENV_FILE)
 
 app = FastAPI(title="AVAL BOT Admin")
@@ -255,8 +260,19 @@ async def web_runtime_config(request: Request):
         return RedirectResponse(f"/admin?section=runtime&flash=" + quote("تغییری برای ذخیره وارد نشده است."), status_code=303)
     try:
         validate_config_updates(updates)
+        # On Railway the /app tree is read-only, so the .env may not exist
+        # yet. Create it empty first; the update then writes cleanly.
+        if IS_CONTAINER_PLATFORM and not ENV_FILE.exists():
+            try:
+                ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ENV_FILE.write_text("# managed by AVAL BOT admin panel\n", encoding="utf-8")
+            except OSError:
+                pass
         update_env_file(ENV_FILE, updates)
     except (ValueError, OSError):
+        if IS_CONTAINER_PLATFORM:
+            message = "ذخیره‌سازی روی این پلتفرم ممکن نیست؛ متغیرها را از تنظیمات Railway تغییر بده."
+            return RedirectResponse(f"/admin?section=runtime&flash={quote(message)}", status_code=303)
         return RedirectResponse(f"/admin?section=runtime&flash=" + quote("تنظیمات معتبر نیست یا ذخیره‌سازی انجام نشد."), status_code=303)
     if IS_CONTAINER_PLATFORM:
         # On Railway there is no systemd to restart; the values are saved

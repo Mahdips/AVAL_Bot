@@ -1,0 +1,36 @@
+# Secrets and runtime state
+.env
+.env.*
+!.env.example
+bot.db
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+a__pycache__/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Logs and backups
+*.log
+backups/
+backup_*.db
+
+# Local upload staging folder (build artifact, not for the repo)
+AVAL_Bot_upload/
+
+# Railway deployment package lives separately in its own repository
+aval-bot-railway/
+AVAL_Bot_v1.1/
+AVAL_Bot_v1.1.zip
+
+# Local tools and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
