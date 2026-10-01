@@ -6583,6 +6583,7 @@ async def xui_category_view_callback(callback: CallbackQuery):
 
 
 
+@dp.message(F.text == "🎬 مدیریت آموزش اتصال")
 async def tutorial_admin_start(
     message: Message,
     state: FSMContext,
